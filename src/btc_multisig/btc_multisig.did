@@ -47,9 +47,16 @@ service : (network) -> {
       amount_in_satoshi: satoshi;
     }) -> (text);
 
+    "script_sig": (record {
+      destination_address: bitcoin_address;
+      amount_in_satoshi: satoshi;
+    }) -> (text);
+
     "say_hello": () -> (text);
 
-    "generate_2_public_keys": () -> (text, text);
+    "generate_first_pair_of_keys_string": () -> (text, text);
+
+    "generate_second_pair_of_keys_string": () -> (text, text);
 
     "get_balance": (address: bitcoin_address) -> (satoshi);
 

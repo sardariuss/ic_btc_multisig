@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 hex = "0.4.3"
-bitcoin = "0.28.1"
+bitcoin = { version = "0.31.0", features = ["rand"] }
 bs58 = "0.4.0"
 candid = "0.9.3"
 ic-cdk = "0.10.0"

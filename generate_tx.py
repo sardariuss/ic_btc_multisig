@@ -10,20 +10,16 @@ SelectParams("testnet")
 
 # Create the (in)famous correct brainwallet secret key.
 # first key
-h1 = hashlib.sha256(b'correct horse battery staple first').digest()
-seckey1 = CBitcoinSecret.from_secret_bytes(h1)
-pubkey1 = "0301abde8810babb194564c49f690a54cbe3be595838e1668950118bc2e0cc655a"
+seckey1 = CBitcoinSecret.from_secret_bytes(bytes.fromhex("03d9cd11d73f84fcd33308143eaffa3e9b3b353f85ec5e608e5ce81d0eecb5aa"))
 
 # second key
-h2 = hashlib.sha256(b'correct horse battery staple second').digest()
-seckey2 = CBitcoinSecret.from_secret_bytes(h2)
-pubkey2 = "023134778661a1cbb8ca508734f728ca12c1a9d4e379b58ff3e491f69ceb2eb824"
+seckey2 = CBitcoinSecret.from_secret_bytes(bytes.fromhex("c0395f033eaace8cb17cc3249c56f706a5490daeeebc0476ae18a73c21d8c63f"))
 
 # Create a witnessScript. witnessScript in SegWit is equivalent to redeemScript in P2SH transaction,
 # however, while the redeemScript of a P2SH transaction is included in the ScriptSig, the 
 # WitnessScript is included in the Witness field, making P2WSH inputs cheaper to spend than P2SH 
 # inputs.
-witness_script = CScript([OP_2, bytes.fromhex(pubkey1), bytes.fromhex(pubkey2), OP_2, OP_CHECKMULTISIG])
+witness_script = CScript([OP_2, seckey1.pub, seckey2.pub, OP_2, OP_CHECKMULTISIG])
 script_hash = hashlib.sha256(witness_script).digest()
 script_pubkey = CScript([OP_0, script_hash])
 
@@ -31,30 +27,28 @@ script_pubkey = CScript([OP_0, script_hash])
 # You'll need to send some funds to it to create a txout to spend.
 address = P2WSHBitcoinAddress.from_scriptPubKey(script_pubkey)
 print('Address:', str(address))
-# outputs: Address: bcrt1qljlyqaexx4mmhpl66e6nqdtagjaht87pghuq6p0f98a765c9uj9s3f3ee3
+# outputs: Address: tb1qjzrkp6ms3ghxdx2mq9mkr3gaap880swq4v4w7cnaglnk75p8epzq7d5yag
 
 # we are continuing the code from above
 
-txid = lx("49ff22c9985c1991791b7a3bd6a2e8d1d6567ca283e0885afdc83bd92f56d1c4")
+# https://testnet.bitcoinexplorer.org/tx/e46ded244fe701ad4a7ccaf5d793136e13abf6fae4af5118820d62c8361bcbf4
+txid = lx("e46ded244fe701ad4a7ccaf5d793136e13abf6fae4af5118820d62c8361bcbf4")
 vout = 0
 
 # Specify the amount send to your P2WSH address.
-amount = int(1 * COIN)
-
-# Calculate an amount for the upcoming new UTXO. Set a high fee (5%) to bypass bitcoind minfee
-# setting on regtest.
-amount_less_fee = amount * 0.99
+amount = int(200000)
 
 # Create the txin structure, which includes the outpoint. The scriptSig defaults to being empty as
 # is necessary for spending a P2WSH output.
 txin = CMutableTxIn(COutPoint(txid, vout))
 
 # Specify a destination address and create the txout.
-destination = CBitcoinAddress("mkJ1nQaSPppu8o5srLxaRBRSQeACp49eyK").to_scriptPubKey() 
-txout = CMutableTxOut(amount_less_fee, destination)
+destination_0 = CBitcoinAddress("mkJ1nQaSPppu8o5srLxaRBRSQeACp49eyK").to_scriptPubKey()
+txout_0 = CMutableTxOut(5000, destination_0)
+txout_1 = CMutableTxOut(95000, address.to_scriptPubKey()) # Fee of 100000
 
 # Create the unsigned transaction.
-tx = CMutableTransaction([txin], [txout])
+tx = CMutableTransaction([txin], [txout_0, txout_1])
 
 # Calculate the signature hash for that transaction.
 sighash = SignatureHash(
@@ -65,6 +59,8 @@ sighash = SignatureHash(
     amount=amount,
     sigversion=SIGVERSION_WITNESS_V0,
 )
+
+print('sighash:', sighash.hex())
 
 # Now sign it. We have to append the type of signature we want to the end, in this case the usual
 # SIGHASH_ALL.
@@ -77,4 +73,4 @@ tx.wit = CTxWitness([CTxInWitness(witness)])
 
 # Done! Print the transaction
 print(b2x(tx.serialize()))
-# outputs: 01000000000101c4d1562fd93bc8fd5a88e083a27c56d6d1e8a2d63b7a1b7991195c98c922ff490000000000ffffffff01c09ee605000000001600147829e2df6fd013aa5303d4e0af578d4275629bd30400483045022100fef9da5dfaea90104f033960b00612753197bf96c69fce097699aff60261aa3402203b72ed27c929125e5aa0066e6f641b7ffaee4bb6e4929a2428e79a2e0ed4f0140148304502210094fca9f85165c024cace7e92a099be3199e427103a971fd6336ce7386bb8fe410220046b043475b72ee5f9fa2872344c689ee9c800031010db0c11fdb57b0d37ab6301475221038d19497c3922b807c91b829d6873ae5bfa2ae500f3237100265a302fdce87b052103d3a9dff5a0bb0267f19a9ee1c374901c39045fbe041c1c168d4da4ce0112595552ae00000000
+# outputs: 01000000000101f4cb1b36c8620d821851afe4faf6ab136e1393d7f5ca7c4aad01e74f24ed6de40000000000ffffffff02a00f0000000000001976a9143466223e25276af3fae4d3ba3706f08228147dc388acb036000000000000220020908760eb708a2e66995b017761c51de84e77c1c0ab2aef627d47e76f5027c8440400473044022077207b4c321da5d5f0ebbe85a271c964ff9057d72da02c2c026ef860c5a643750220764ebab188b2853e0190c9e41ff59a41e3ead7230563ac56f214ce6eafdd5b2a01483045022100e8ad4476b30d77068b612518188b8a2a7b317ab7f5d56ee414520d9644e3110e022002e1d5c22bb94b380f5cb31f4432b70b4fa7bd65d267c6ae97cc9c798f9fd39c014752210301abde8810babb194564c49f690a54cbe3be595838e1668950118bc2e0cc655a21023134778661a1cbb8ca508734f728ca12c1a9d4e379b58ff3e491f69ceb2eb82452ae00000000

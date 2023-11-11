@@ -61,14 +61,14 @@ pub async fn get_current_fee_percentiles() -> Vec<MillisatoshiPerByte> {
     bitcoin_api::get_current_fee_percentiles(network).await
 }
 
-/// Returns the P2PKH address of this canister at a specific derivation path.
-#[update]
-pub async fn get_p2pkh_address() -> String {
-    let derivation_path = DERIVATION_PATH.with(|d| d.clone());
-    let key_name = KEY_NAME.with(|kn| kn.borrow().to_string());
-    let network = NETWORK.with(|n| n.get());
-    bitcoin_wallet::get_p2pkh_address(network, key_name, derivation_path).await
-}
+///// Returns the P2PKH address of this canister at a specific derivation path.
+//#[update]
+//pub async fn get_p2pkh_address() -> String {
+//    let derivation_path = DERIVATION_PATH.with(|d| d.clone());
+//    let key_name = KEY_NAME.with(|kn| kn.borrow().to_string());
+//    let network = NETWORK.with(|n| n.get());
+//    bitcoin_wallet::get_p2pkh_address(network, key_name, derivation_path).await
+//}
 
 /// Returns the P2WPKH address @todo
 #[query]
@@ -80,13 +80,25 @@ pub async fn get_p2wsh_multisig_2x2_address() -> String {
 }
 
 #[query]
-pub async fn generate_2_public_keys() -> (String, String) {
-    custody_wallet::generate_2_public_keys()
+pub async fn generate_first_pair_of_keys_string() -> (String, String) {
+    custody_wallet::generate_2_pairs_of_keys_string().0
 }
 
 #[query]
-pub async fn say_hello() -> String {
-    "Hello".to_string()
+pub async fn generate_second_pair_of_keys_string() -> (String, String) {
+    custody_wallet::generate_2_pairs_of_keys_string().1
+}
+
+#[update]
+pub async fn script_sig(request: types::SendRequest) -> String {
+    let network = NETWORK.with(|n| n.get());
+    let hex = custody_wallet::script_sig(
+        network,
+        request.destination_address,
+        request.amount_in_satoshi,
+    )
+    .await;
+    hex
 }
 
 #[update]
@@ -115,24 +127,24 @@ pub async fn send_from_multisig_2x2(request: types::SendRequest) -> String {
     tx_id.to_string()
 }
 
-/// Sends the given amount of bitcoin from this canister to the given address.
-/// Returns the transaction ID.
-#[update]
-pub async fn send(request: types::SendRequest) -> String {
-    let derivation_path = DERIVATION_PATH.with(|d| d.clone());
-    let network = NETWORK.with(|n| n.get());
-    let key_name = KEY_NAME.with(|kn| kn.borrow().to_string());
-    let tx_id = bitcoin_wallet::send(
-        network,
-        derivation_path,
-        key_name,
-        request.destination_address,
-        request.amount_in_satoshi,
-    )
-    .await;
-
-    tx_id.to_string()
-}
+///// Sends the given amount of bitcoin from this canister to the given address.
+///// Returns the transaction ID.
+//#[update]
+//pub async fn send(request: types::SendRequest) -> String {
+//    let derivation_path = DERIVATION_PATH.with(|d| d.clone());
+//    let network = NETWORK.with(|n| n.get());
+//    let key_name = KEY_NAME.with(|kn| kn.borrow().to_string());
+//    let tx_id = bitcoin_wallet::send(
+//        network,
+//        derivation_path,
+//        key_name,
+//        request.destination_address,
+//        request.amount_in_satoshi,
+//    )
+//    .await;
+//
+//    tx_id.to_string()
+//}
 
 #[pre_upgrade]
 fn pre_upgrade() {
