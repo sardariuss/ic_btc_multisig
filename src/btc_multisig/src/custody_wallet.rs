@@ -179,7 +179,7 @@ pub async fn transaction_from_multisig_2x2(
     let signed_transaction = sign_transaction(
         built_transaction_output.transaction,
         sign_with_ecdsa,
-        built_transaction_output.output_amount_satoshi,
+        &own_utxos,
     );
 
     //let signed_transaction_bytes = signed_transaction.serialize();
@@ -244,7 +244,7 @@ pub async fn send_from_multisig_2x2(
     let signed_transaction = sign_transaction(
         built_transaction_output.transaction,
         sign_with_ecdsa,
-        built_transaction_output.output_amount_satoshi,
+        &own_utxos,
     );
 
     let signed_transaction_bytes = consensus::serialize(&signed_transaction);
@@ -389,7 +389,7 @@ fn build_transaction_with_fee(
 fn sign_transaction<SignFun>(
     mut transaction: Transaction,
     signer: SignFun,
-    amount_satoshi: u64,
+    own_utxos: &[Utxo],
 ) -> Transaction
 where
     SignFun: Fn(&SecretKey, Vec<u8>) -> Vec<u8>,
@@ -406,12 +406,16 @@ where
     let txclone = transaction.clone();
     let mut cache = sighash::SighashCache::new(&txclone);
 
+    let len = transaction.input.len();
+
     for (index, input) in transaction.input.iter_mut().enumerate() {
         // Clear any previous witness
         input.witness.clear();
 
+        let amount = own_utxos.get(len - index - 1).unwrap().value;
+
         let sighash = cache
-            .p2wsh_signature_hash(index, &witness_script, Amount::from_sat(amount_satoshi), EcdsaSighashType::All).expect("failed to compute sighash");
+            .p2wsh_signature_hash(index, &witness_script, Amount::from_sat(amount), EcdsaSighashType::All).expect("failed to compute sighash");
 
         let (kp1, kp2) = generate_2_pairs_of_keys();
         let mut signature_der_1 = signer(&kp1.secret_key(), sighash.to_byte_array().to_vec());
