@@ -32,31 +32,12 @@ type get_utxos_response = record {
   next_page: opt blob;
 };
 
-service : (network) -> {
-    "get_p2pkh_address": () -> (bitcoin_address);
+type init_args = record {
+  bitcoin_network: network;
+  fiduciary_id: principal;
+};
 
-    "get_p2wsh_multisig_2x2_address": () -> (bitcoin_address);
-
-    "send_from_multisig_2x2": (record {
-      destination_address: bitcoin_address;
-      amount_in_satoshi: satoshi;
-    }) -> (transaction_id);
-
-    "transaction_from_multisig_2x2": (record {
-      destination_address: bitcoin_address;
-      amount_in_satoshi: satoshi;
-    }) -> (text);
-
-    "script_sig": (record {
-      destination_address: bitcoin_address;
-      amount_in_satoshi: satoshi;
-    }) -> (text);
-
-    "say_hello": () -> (text);
-
-    "generate_first_pair_of_keys_string": () -> (text, text);
-
-    "generate_second_pair_of_keys_string": () -> (text, text);
+service : (init_args) -> {
 
     "get_balance": (address: bitcoin_address) -> (satoshi);
 
@@ -64,8 +45,11 @@ service : (network) -> {
 
     "get_current_fee_percentiles": () -> (vec millisatoshi_per_vbyte);
 
-    "send": (record {
+    "get_wallet_address": () -> (bitcoin_address);
+
+    "wallet_send": (record {
       destination_address: bitcoin_address;
       amount_in_satoshi: satoshi;
     }) -> (transaction_id);
+
 }
