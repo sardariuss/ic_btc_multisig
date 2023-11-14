@@ -1,6 +1,6 @@
-#dfx canister create --all --ic
-#
-#dfx build --ic
+dfx canister create --all --ic
+
+dfx build --ic
 
 export CUSTODY_ID=$(dfx canister id custody_wallet --ic)
 export FIDUCIARY_ID=$(dfx canister id fiduciary --ic)

@@ -6,7 +6,8 @@ mod types;
 use ic_cdk::api::management_canister::bitcoin::{
     BitcoinNetwork, GetUtxosResponse, MillisatoshiPerByte,
 };
-use ic_cdk_macros::{init, post_upgrade, pre_upgrade, query, update};
+use ic_cdk::api;
+use ic_cdk_macros::{init, post_upgrade, pre_upgrade, update};
 use std::cell::{Cell, RefCell};
 
 thread_local! {
@@ -42,6 +43,12 @@ pub fn init(args: InitArguments) {
         BitcoinNetwork::Mainnet | BitcoinNetwork::Testnet => "test_key_1",
     });
 
+    let custody_wallet = custody_wallet::CustodyWallet::new(
+        args.bitcoin_network,
+        key.clone(),
+        args.fiduciary_id.clone()
+    );
+
     NETWORK.with(|n| 
         n.set(args.bitcoin_network)
     );
@@ -52,6 +59,10 @@ pub fn init(args: InitArguments) {
 
     FIDUCIARY_ID.with(|id| {
         id.replace(Some(args.fiduciary_id));
+    });
+
+    CUSTODY_WALLET.with(|wallet| {
+        wallet.replace(custody_wallet);
     });
 }
 
@@ -78,27 +89,28 @@ pub async fn get_current_fee_percentiles() -> Vec<MillisatoshiPerByte> {
 }
 
 #[update]
-pub async fn create_wallet() {
-    let network = NETWORK.with(|n| n.get());
-    let key = KEY_NAME.with(|kn| kn.borrow().to_string());
-    let fiduciary_id = FIDUCIARY_ID.with(|id| id.borrow().clone().unwrap());
-    let wallet = custody_wallet::new(network, key, fiduciary_id).await;
-    CUSTODY_WALLET.with(|custody_wallet| {
-        custody_wallet.replace(wallet);
+pub async fn get_wallet_address() -> String {
+    let principal = &api::caller();
+    let mut custody_wallet = CUSTODY_WALLET.with(|w| w.borrow().clone());
+    let address = custody_wallet::get_or_create_wallet(&mut custody_wallet, principal.clone()).await;
+    CUSTODY_WALLET.with(|wallet| {
+        wallet.replace(custody_wallet);
     });
+    address.to_string()
 }
 
-#[query]
-pub async fn get_address() -> String {
-    CUSTODY_WALLET.with(|w| w.borrow().address.to_string())
-}
-
-/// Sends the given amount of bitcoin from this canister to the given address.
+/// Sends the given amount of bitcoin from the principal's wallet to the given address.
 /// Returns the transaction ID.
 #[update]
-pub async fn send(request: types::SendRequest) -> String {
+pub async fn wallet_send(request: types::SendRequest) -> String {
+    let principal = &api::caller();
     let wallet = CUSTODY_WALLET.with(|w| w.borrow().clone());
-    custody_wallet::send(&wallet, request.destination_address, request.amount_in_satoshi).await.to_string()
+    custody_wallet::send(
+        &wallet, 
+        principal.clone(), 
+        request.destination_address, 
+        request.amount_in_satoshi)
+    .await.to_string()
 }
 
 #[pre_upgrade]

@@ -3,6 +3,7 @@ use crate::{bitcoin_api, ecdsa_api};
 use bitcoin::Sequence;
 use bitcoin::absolute::LockTime;
 use bitcoin::address::NetworkChecked;
+use candid::Principal;
 use secp256k1::PublicKey;
 use bitcoin::{
     blockdata::witness::Witness,
@@ -16,6 +17,7 @@ use bitcoin::{
 };
 use ic_cdk::api::management_canister::bitcoin::{MillisatoshiPerByte, BitcoinNetwork, Satoshi, Utxo};
 use ic_cdk::{call, print};
+use std::collections::HashMap;
 use std::str::FromStr;
 
 const SIG_HASH_TYPE: EcdsaSighashType = EcdsaSighashType::All;
@@ -38,14 +40,19 @@ pub struct BuiltTransactionOutput {
     pub transaction: Transaction,
     pub input_amounts: Vec<Amount>,
 }
+#[derive(Clone)]
+pub struct WalletInfo {
+    pub witness_script: ScriptBuf,
+    pub address: Address<NetworkChecked>,
+    pub derivation_path: Vec<Vec<u8>>,
+}
 
 #[derive(Clone)]
 pub struct CustodyWallet {
     pub network: BitcoinNetwork,
     pub key_name: String,
     pub fiduciary_canister: candid::Principal,
-    pub witness_script: ScriptBuf,
-    pub address: Address<NetworkChecked>,
+    pub wallets: HashMap<candid::Principal, WalletInfo>,
 }
 
 impl Default for CustodyWallet {
@@ -54,23 +61,53 @@ impl Default for CustodyWallet {
             network: BitcoinNetwork::Regtest,
             key_name: String::from(""),
             fiduciary_canister: candid::Principal::anonymous(),
-            witness_script: ScriptBuf::new(),
-            address: Address::from_str("mopkf9Tud7qGd5nyT1qfvBMabYeemy92Pu").unwrap().assume_checked(), // @todo
+            wallets: HashMap::new(),
         }
     }
 }
 
-pub async fn new(network: BitcoinNetwork, key_name: String, fiduciary_canister: candid::Principal) -> CustodyWallet {
+impl CustodyWallet {
+    pub fn new(network: BitcoinNetwork, key_name: String, fiduciary_canister: candid::Principal) -> Self {
+        CustodyWallet {
+            network,
+            key_name,
+            fiduciary_canister,
+            wallets: HashMap::new(),
+        }
+    }
+}
 
-    let pk1 = ecdsa_api::ecdsa_public_key(key_name.clone(), vec![], Option::None).await;
-    
+pub async fn get_or_create_wallet(custody_wallet: &mut CustodyWallet, principal: candid::Principal) -> Address<NetworkChecked> {
+
+    if Principal::anonymous() == principal {
+        panic!("Principal cannot be anonymous.");
+    }
+
+    // Check if we already have a wallet for this principal.
+    match custody_wallet.wallets.get(&principal) {
+        Some(wallet) => {
+            return wallet.address.clone();
+        },
+        None => {},
+    }
+
+    // Create a new wallet for this principal.
+    // Right now there is only one wallet for each principal,
+    // so the it is derived from the principal itself.
+    let derivation_path = vec![principal.as_slice().to_vec()];
+    // First public key is from the custody_wallet canister (i.e. this canister).
+    let pk1 = ecdsa_api::ecdsa_public_key(
+        custody_wallet.key_name.clone(),
+        derivation_path.clone(),
+        Option::None)
+    .await;
+    // Second public key is from the fiduciary canister.
     let fiduciary_pk: Result<(Vec<u8>,), _> = call(
-        fiduciary_canister,
+        custody_wallet.fiduciary_canister,
         "public_key",
-        (),
+        (derivation_path.clone(),),
     )
     .await;
-
     let pk2 = fiduciary_pk.expect("Failed to obtain public key from fiduciary canister.").0;
   
     // Create a 2-of-2 multisig witness script.
@@ -84,7 +121,7 @@ pub async fn new(network: BitcoinNetwork, key_name: String, fiduciary_canister: 
 
     let script_pub_key = ScriptBuf::new_p2wsh(&witness_script.wscript_hash());
 
-    let address = match bitcoin::Address::from_script(&script_pub_key, match_network(network)) {
+    let address = match bitcoin::Address::from_script(&script_pub_key, match_network(custody_wallet.network)) {
         Ok(address) => {
            address
         }
@@ -93,13 +130,14 @@ pub async fn new(network: BitcoinNetwork, key_name: String, fiduciary_canister: 
         }
     };
 
-    CustodyWallet {
-        network,
-        key_name,
-        fiduciary_canister,
+    // Store the script and wallet address for this principal.
+    custody_wallet.wallets.insert(principal, WalletInfo {
         witness_script,
-        address,
-    }
+        address: address.clone(),
+        derivation_path,
+    });
+
+    address
 }
 
 /// Sends a transaction to the network that transfers the given amount to the
@@ -107,9 +145,21 @@ pub async fn new(network: BitcoinNetwork, key_name: String, fiduciary_canister: 
 /// at the given derivation path.
 pub async fn send(
     wallet: &CustodyWallet,
+    from_principal: candid::Principal,
     dst_address: String,
     amount: Satoshi,
 ) -> Txid {
+
+    // Check if we already have a wallet for this principal.
+    let wallet_info = match wallet.wallets.get(&from_principal) {
+        Some(info) => {
+            info
+        },
+        None => {
+            panic!("No wallet found for principal {}", from_principal);
+        },
+    };
+
     // Get fee percentiles from previous transactions to estimate our own fee.
     let fee_percentiles = bitcoin_api::get_current_fee_percentiles(wallet.network).await;
 
@@ -127,7 +177,7 @@ pub async fn send(
     // Note that pagination may have to be used to get all UTXOs for the given address.
     // For the sake of simplicity, it is assumed here that the `utxo` field in the response
     // contains all UTXOs.
-    let own_utxos = bitcoin_api::get_utxos(wallet.network, wallet.address.to_string())
+    let own_utxos = bitcoin_api::get_utxos(wallet.network, wallet_info.address.to_string())
         .await
         .utxos;
 
@@ -135,7 +185,9 @@ pub async fn send(
 
     // Build the transaction that sends `amount` to the destination address.
     let built_transaction_output = build_transaction(
-        wallet,
+        &wallet.key_name,
+        wallet.fiduciary_canister,
+        wallet_info,
         &own_utxos,
         &dst_address,
         amount,
@@ -148,7 +200,9 @@ pub async fn send(
 
     // Sign the transaction.
     let signed_transaction = sign_transaction(
-        wallet,
+        &wallet.key_name,
+        wallet.fiduciary_canister,
+        wallet_info,
         built_transaction_output,
         SigningMethod::Real,
     ).await;
@@ -169,7 +223,9 @@ pub async fn send(
 // Builds a transaction to send the given `amount` of satoshis to the
 // destination address.
 async fn build_transaction(
-    wallet: &CustodyWallet,
+    key_name: &str,
+    fiduciary_canister: candid::Principal,
+    wallet_info: &WalletInfo,
     own_utxos: &[Utxo],
     dst_address: &Address,
     amount: Satoshi,
@@ -187,13 +243,15 @@ async fn build_transaction(
     let mut total_fee = 0;
     loop {
         let built_transaction =
-            build_transaction_with_fee(wallet, own_utxos, dst_address, amount, total_fee)
+            build_transaction_with_fee(&wallet_info.address, own_utxos, dst_address, amount, total_fee)
                 .expect("Error building transaction.");
 
         // Sign the transaction. In this case, we only care about the size
         // of the signed transaction, so we use a mock signer here for efficiency.
         let signed_transaction = sign_transaction(
-            wallet,
+            key_name,
+            fiduciary_canister,
+            wallet_info,
             built_transaction.clone(),
             SigningMethod::Fake,
         ).await;
@@ -210,7 +268,7 @@ async fn build_transaction(
 }
 
 fn build_transaction_with_fee(
-    wallet: &CustodyWallet,
+    from_address: &Address,
     own_utxos: &[Utxo],
     dst_address: &Address,
     amount: u64,
@@ -266,7 +324,7 @@ fn build_transaction_with_fee(
 
     if remaining_amount >= DUST_THRESHOLD {
         outputs.push(TxOut {
-            script_pubkey: wallet.address.script_pubkey(),
+            script_pubkey: from_address.script_pubkey(),
             value: Amount::from_sat(remaining_amount),
         });
     }
@@ -283,7 +341,9 @@ fn build_transaction_with_fee(
 }
 
 async fn sign_transaction(
-    wallet: &CustodyWallet,
+    key_name: &str,
+    fiduciary_canister: candid::Principal,
+    wallet_info: &WalletInfo,
     mut built_transaction: BuiltTransactionOutput,
     signing: SigningMethod,
 ) -> Transaction
@@ -298,19 +358,19 @@ async fn sign_transaction(
         let amount = built_transaction.input_amounts.get(index).unwrap();
 
         let sighash = cache
-            .p2wsh_signature_hash(index, &wallet.witness_script, amount.clone(), EcdsaSighashType::All).expect("failed to compute sighash");
+            .p2wsh_signature_hash(index, &wallet_info.witness_script, amount.clone(), EcdsaSighashType::All).expect("failed to compute sighash");
 
         let (signature_1, signature_2) = match signing {
             SigningMethod::Fake => (vec![255; 64], vec![255; 64]),
             SigningMethod::Real => {
                 let message_hash = sighash.to_byte_array().to_vec();
                 // First sign with the current (custody_wallet) canister.
-                let sig1 = ecdsa_api::sign_with_ecdsa(wallet.key_name.clone(), vec![], message_hash.clone()).await;
+                let sig1 = ecdsa_api::sign_with_ecdsa(key_name.to_string(), wallet_info.derivation_path.clone(), message_hash.clone()).await;
                 // Then sign with the remote (fiduciary) canister.
                 let res_sig2: Result<(Vec<u8>,),_>  = call(
-                    wallet.fiduciary_canister,
+                    fiduciary_canister,
                     "sign_for_custody",
-                    (message_hash,),
+                    (wallet_info.derivation_path.clone(), message_hash,),
                 ).await;
                 let sig2 = res_sig2.unwrap().0;
                 (sec1_to_der(sig1), sec1_to_der(sig2))
@@ -325,7 +385,7 @@ async fn sign_transaction(
         input.witness.push(vec![]);  // Placeholder for scriptSig
         input.witness.push(signature_der_1);
         input.witness.push(signature_der_2);
-        input.witness.push(wallet.witness_script.clone().into_bytes());
+        input.witness.push(wallet_info.witness_script.clone().into_bytes());
     }
 
     built_transaction.transaction

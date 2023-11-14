@@ -45,11 +45,9 @@ service : (init_args) -> {
 
     "get_current_fee_percentiles": () -> (vec millisatoshi_per_vbyte);
 
-    "create_wallet": () -> ();
+    "get_wallet_address": () -> (bitcoin_address);
 
-    "get_address": () -> (bitcoin_address);
-
-    "send": (record {
+    "wallet_send": (record {
       destination_address: bitcoin_address;
       amount_in_satoshi: satoshi;
     }) -> (transaction_id);
