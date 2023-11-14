@@ -1,7 +1,7 @@
 {
   "version": 1,
   "canisters": {
-    "btc_multisig": {
+    "custody_wallet": {
       "type": "custom",
       "package": "btc_multisig",
       "candid": "src/btc_multisig/btc_multisig.did",
@@ -12,6 +12,13 @@
           "name": "candid:service"
         }
       ]
+    },
+    "fiduciary": {
+      "main": "src/fiduciary/Main.mo",
+        "type": "motoko",
+        "declarations": {
+          "output": "src/fiduciary/declarations/"
+        }
     }
   },
   "defaults": {

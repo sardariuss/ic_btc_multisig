@@ -1,207 +1,110 @@
-//! A demo of a very bare-bones bitcoin "wallet".
-//!
-//! The wallet here showcases how bitcoin addresses can be be computed
-//! and how bitcoin transactions can be signed. It is missing several
-//! pieces that any production-grade wallet would have, including:
-//!
-//! * Support for address types that aren't P2PKH.
-//! * Caching spent UTXOs so that they are not reused in future transactions.
-//! * Option to set the fee.
-use crate::bitcoin_api;
-use bitcoin::Sequence;
+/// @todo
+use crate::{bitcoin_api, ecdsa_api};
+use bitcoin::{Sequence, ScriptHash};
 use bitcoin::absolute::LockTime;
-use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::Keypair;
-//use bitcoin::hashes::hex::ToHex;
-//use bitcoin::util::psbt::serialize::Serialize;
+use bitcoin::address::NetworkChecked;
+use secp256k1::PublicKey;
 use bitcoin::{
     blockdata::witness::Witness,
     hashes::Hash,
-    //network::constants::Network,
-    Address, EcdsaSighashType, OutPoint, Script, Transaction, TxIn, TxOut, Txid,
+    Address, EcdsaSighashType, OutPoint, Transaction, TxIn, TxOut, Txid,
     consensus,
     ScriptBuf,
     network::Network,
-    key::Secp256k1,
     amount::Amount,
     sighash,
-    ecdsa
 };
 use ic_cdk::api::management_canister::bitcoin::{MillisatoshiPerByte, BitcoinNetwork, Satoshi, Utxo};
-use ic_cdk::print;
-use bitcoin::key::secp256k1::{Message, SecretKey};
+use ic_cdk::{call, print};
 use std::str::FromStr;
 
 const SIG_HASH_TYPE: EcdsaSighashType = EcdsaSighashType::All;
 
-pub fn create_multisig_2x2_witness_script() -> ScriptBuf {
-    // Fetch the public key of the given derivation path.
-    let (kp1, kp2) = generate_2_pairs_of_keys();
-
-    // Create a 2-of-2 multisig witness script.
-    bitcoin::blockdata::script::Builder::new()
-        .push_int(2)
-        .push_slice(&kp1.public_key().serialize())
-        .push_slice(&kp2.public_key().serialize())
-        .push_int(2)
-        .push_opcode(bitcoin::blockdata::opcodes::all::OP_CHECKMULTISIG)
-        .into_script()
+fn match_network(bitcoin_network: BitcoinNetwork) -> Network {
+    match bitcoin_network {
+        BitcoinNetwork::Mainnet => Network::Bitcoin,
+        BitcoinNetwork::Testnet => Network::Testnet,
+        BitcoinNetwork::Regtest => Network::Regtest,
+    }
 }
 
-pub fn get_p2wsh_multisig_2x2_address(
-    //_network: BitcoinNetwork,
-    //_key_name: String,
-    //_derivation_path: Vec<Vec<u8>>,
-) -> String {
-    let witness_script = create_multisig_2x2_witness_script();
+enum SigningMethod {
+    Fake,
+    Real,
+}
 
-//    let script_pub_key = bitcoin::blockdata::script::Builder::new()
-//        .push_int(0)
-//        .push_slice(witness_script.script_hash().as_inner().as_slice())
-//        .into_script();
+#[derive(Clone)]
+pub struct BuiltTransactionOutput {
+    pub transaction: Transaction,
+    pub input_amounts: Vec<Amount>,
+}
+#[derive(Clone)]
+pub struct CustodyWallet {
+    pub network: BitcoinNetwork,
+    pub key_name: String,
+    pub fiduciary_canister: candid::Principal,
+    pub witness_script: ScriptBuf,
+    pub address: Address<NetworkChecked>,
+}
+
+impl Default for CustodyWallet {
+    fn default() -> Self {
+        CustodyWallet {
+            network: BitcoinNetwork::Regtest,
+            key_name: String::from(""),
+            fiduciary_canister: candid::Principal::anonymous(),
+            witness_script: ScriptBuf::new(),
+            //address: Address::new(Network::Regtest, bitcoin::address::Payload::ScriptHash(ScriptHash::from_str("").unwrap())),
+            address: Address::from_str("mopkf9Tud7qGd5nyT1qfvBMabYeemy92Pu").unwrap().assume_checked(),
+        }
+    }
+}
+
+pub async fn new(network: BitcoinNetwork, key_name: String, fiduciary_canister: candid::Principal) -> CustodyWallet {
+
+    let pk1 = ecdsa_api::ecdsa_public_key(key_name.clone(), vec![], Option::None).await;
+    
+    let fiduciary_pk: Result<(Vec<u8>,), _> = call(
+        fiduciary_canister,
+        "public_key",
+        (),
+    )
+    .await;
+
+    let pk2 = fiduciary_pk.unwrap().0;
+  
+    // Create a 2-of-2 multisig witness script.
+    let witness_script = bitcoin::blockdata::script::Builder::new()
+        .push_int(2)
+        .push_slice(PublicKey::from_slice(pk1.as_slice()).unwrap().serialize())
+        .push_slice(PublicKey::from_slice(pk2.as_slice()).unwrap().serialize())
+        .push_int(2)
+        .push_opcode(bitcoin::blockdata::opcodes::all::OP_CHECKMULTISIG)
+        .into_script();
 
     let script_pub_key = ScriptBuf::new_p2wsh(&witness_script.wscript_hash());
 
-    let address = bitcoin::Address::from_script(&script_pub_key, Network::Testnet).unwrap();
+    let address = bitcoin::Address::from_script(&script_pub_key, match_network(network)).unwrap();
 
-    address.to_string()
-}
-
-pub fn generate_2_pairs_of_keys() -> (Keypair, Keypair) {
-    let secp = bitcoin::key::Secp256k1::new();
-    let pair_1 = Keypair::from_seckey_str(&secp, "03d9cd11d73f84fcd33308143eaffa3e9b3b353f85ec5e608e5ce81d0eecb5aa").unwrap();
-    let pair_2 = Keypair::from_seckey_str(&secp, "c0395f033eaace8cb17cc3249c56f706a5490daeeebc0476ae18a73c21d8c63f").unwrap();
-    return (pair_1, pair_2);
-}
-
-pub fn generate_2_pairs_of_keys_string() -> ((String, String), (String, String)) {
-    let (kp1, kp2) = generate_2_pairs_of_keys();
-    ((kp1.display_secret().to_string(), hex::encode(kp1.public_key().serialize())), ((kp2.display_secret().to_string()), hex::encode(kp2.public_key().serialize())))
-}
-
-pub async fn script_sig(
-    network: BitcoinNetwork,
-    dst_address: String,
-    amount: Satoshi,
-) -> String {
-    // Get fee percentiles from previous transactions to estimate our own fee.
-    let fee_percentiles = bitcoin_api::get_current_fee_percentiles(network).await;
-
-    let fee_per_byte = if fee_percentiles.is_empty() {
-        // There are no fee percentiles. This case can only happen on a regtest
-        // network where there are no non-coinbase transactions. In this case,
-        // we use a default of 2000 millisatoshis/byte (i.e. 2 satoshi/byte)
-        2000
-    } else {
-        // Choose the 50th percentile for sending fees.
-        fee_percentiles[50]
-    };
-
-    // Fetch our public key, P2PKH address, and UTXOs.
-    let own_address = get_p2wsh_multisig_2x2_address();
-
-    print("Fetching UTXOs...");
-    // Note that pagination may have to be used to get all UTXOs for the given address.
-    // For the sake of simplicity, it is assumed here that the `utxo` field in the response
-    // contains all UTXOs.
-    let own_utxos = bitcoin_api::get_utxos(network, own_address.clone())
-        .await
-        .utxos;
-
-    let own_address = Address::from_str(&own_address).unwrap().assume_checked();
-    let dst_address = Address::from_str(&dst_address).unwrap().assume_checked();
-
-    // Build the transaction that sends `amount` to the destination address.
-    let built_transaction_output = build_transaction(
-        &own_address,
-        &own_utxos,
-        &dst_address,
-        amount,
-        fee_per_byte,
-    )
-    .await;
-
-    let witness_script = create_multisig_2x2_witness_script();
-
-    let mut cache = sighash::SighashCache::new(&built_transaction_output.transaction);
-
-    let sighash = cache
-        .p2wsh_signature_hash(0, &witness_script, Amount::from_sat(built_transaction_output.output_amount_satoshi), EcdsaSighashType::All).expect("failed to compute sighash");
-    return sighash.to_byte_array().as_hex().to_string();
-}
-
-pub async fn transaction_from_multisig_2x2(
-    network: BitcoinNetwork,
-    dst_address: String,
-    amount: Satoshi,
-) -> String {
-    // Get fee percentiles from previous transactions to estimate our own fee.
-    let fee_percentiles = bitcoin_api::get_current_fee_percentiles(network).await;
-
-    let fee_per_byte = if fee_percentiles.is_empty() {
-        // There are no fee percentiles. This case can only happen on a regtest
-        // network where there are no non-coinbase transactions. In this case,
-        // we use a default of 2000 millisatoshis/byte (i.e. 2 satoshi/byte)
-        2000
-    } else {
-        // Choose the 50th percentile for sending fees.
-        fee_percentiles[50]
-    };
-
-    // Fetch our public key, P2PKH address, and UTXOs.
-    let own_address = get_p2wsh_multisig_2x2_address();
-
-    print("Fetching UTXOs...");
-    // Note that pagination may have to be used to get all UTXOs for the given address.
-    // For the sake of simplicity, it is assumed here that the `utxo` field in the response
-    // contains all UTXOs.
-    let own_utxos = bitcoin_api::get_utxos(network, own_address.clone())
-        .await
-        .utxos;
-
-    let own_address = Address::from_str(&own_address).unwrap().assume_checked();
-    let dst_address = Address::from_str(&dst_address).unwrap().assume_checked();
-
-    // Build the transaction that sends `amount` to the destination address.
-    let built_transaction_output = build_transaction(
-        &own_address,
-        &own_utxos,
-        &dst_address,
-        amount,
-        fee_per_byte,
-    )
-    .await;
-
-    //let tx_bytes = transaction.serialize();
-    //print(&format!("Transaction to sign: {}", hex::encode(tx_bytes)));
-
-    // Sign the transaction.
-    let signed_transaction = sign_transaction(
-        built_transaction_output.transaction,
-        sign_with_ecdsa,
-        &own_utxos,
-    );
-
-    //let signed_transaction_bytes = signed_transaction.serialize();
-    let signed_transaction_bytes = consensus::serialize(&signed_transaction);
-    print(&format!(
-        "Signed transaction: {}",
-        hex::encode(&signed_transaction_bytes)
-    ));
-
-    hex::encode(&signed_transaction_bytes)
+    CustodyWallet {
+        network,
+        key_name,
+        fiduciary_canister,
+        witness_script,
+        address,
+    }
 }
 
 /// Sends a transaction to the network that transfers the given amount to the
-/// given destination, where the source of the funds is the canister itself
+/// given destination, where the source of the funds is the canister it
 /// at the given derivation path.
-pub async fn send_from_multisig_2x2(
-    network: BitcoinNetwork,
+pub async fn send(
+    wallet: &CustodyWallet,
     dst_address: String,
     amount: Satoshi,
 ) -> Txid {
     // Get fee percentiles from previous transactions to estimate our own fee.
-    let fee_percentiles = bitcoin_api::get_current_fee_percentiles(network).await;
+    let fee_percentiles = bitcoin_api::get_current_fee_percentiles(wallet.network).await;
 
     let fee_per_byte = if fee_percentiles.is_empty() {
         // There are no fee percentiles. This case can only happen on a regtest
@@ -213,23 +116,19 @@ pub async fn send_from_multisig_2x2(
         fee_percentiles[50]
     };
 
-    // Fetch our public key, P2PKH address, and UTXOs.
-    let own_address = get_p2wsh_multisig_2x2_address();
-
     print("Fetching UTXOs...");
     // Note that pagination may have to be used to get all UTXOs for the given address.
     // For the sake of simplicity, it is assumed here that the `utxo` field in the response
     // contains all UTXOs.
-    let own_utxos = bitcoin_api::get_utxos(network, own_address.clone())
+    let own_utxos = bitcoin_api::get_utxos(wallet.network, wallet.address.to_string())
         .await
         .utxos;
 
-    let own_address = Address::from_str(&own_address).unwrap().assume_checked();
     let dst_address = Address::from_str(&dst_address).unwrap().assume_checked();
 
     // Build the transaction that sends `amount` to the destination address.
     let built_transaction_output = build_transaction(
-        &own_address,
+        wallet,
         &own_utxos,
         &dst_address,
         amount,
@@ -237,15 +136,15 @@ pub async fn send_from_multisig_2x2(
     )
     .await;
 
-    //let tx_bytes = transaction.serialize();
-    //print(&format!("Transaction to sign: {}", hex::encode(tx_bytes)));
+    let tx_bytes = consensus::serialize(&built_transaction_output.transaction);
+    print(&format!("Transaction to sign: {}", hex::encode(tx_bytes)));
 
     // Sign the transaction.
     let signed_transaction = sign_transaction(
-        built_transaction_output.transaction,
-        sign_with_ecdsa,
-        &own_utxos,
-    );
+        wallet,
+        built_transaction_output,
+        SigningMethod::Real,
+    ).await;
 
     let signed_transaction_bytes = consensus::serialize(&signed_transaction);
     print(&format!(
@@ -254,7 +153,7 @@ pub async fn send_from_multisig_2x2(
     ));
 
     print("Sending transaction...");
-    bitcoin_api::send_transaction(network, signed_transaction_bytes).await;
+    bitcoin_api::send_transaction(wallet.network, signed_transaction_bytes).await;
     print("Done");
 
     signed_transaction.txid()
@@ -263,11 +162,11 @@ pub async fn send_from_multisig_2x2(
 // Builds a transaction to send the given `amount` of satoshis to the
 // destination address.
 async fn build_transaction(
-    own_address: &Address,
+    wallet: &CustodyWallet,
     own_utxos: &[Utxo],
     dst_address: &Address,
     amount: Satoshi,
-    _fee_per_byte: MillisatoshiPerByte,
+    fee_per_byte: MillisatoshiPerByte,
 ) -> BuiltTransactionOutput {
     // We have a chicken-and-egg problem where we need to know the length
     // of the transaction in order to compute its proper fee, but we need
@@ -278,39 +177,34 @@ async fn build_transaction(
     // and sign a transaction, see what its size is, and then update the fee,
     // rebuild the transaction, until the fee is set to the correct amount.
     print("Building transaction...");
-    let total_fee = 10_000;
-    //loop {
-        let transaction =
-            build_transaction_with_fee(own_utxos, own_address, dst_address, amount, total_fee)
+    let mut total_fee = 0;
+    loop {
+        let built_transaction =
+            build_transaction_with_fee(wallet, own_utxos, dst_address, amount, total_fee)
                 .expect("Error building transaction.");
 
         // Sign the transaction. In this case, we only care about the size
         // of the signed transaction, so we use a mock signer here for efficiency.
-//        let signed_transaction = sign_transaction(
-//            own_address,
-//            transaction.clone(),
-//            mock_signer
-//        );
+        let signed_transaction = sign_transaction(
+            wallet,
+            built_transaction.clone(),
+            SigningMethod::Fake,
+        ).await;
 
-        //let signed_tx_bytes_len = signed_transaction.serialize().len() as u64;
+        let signed_tx_bytes_len = consensus::serialize(&signed_transaction).len() as u64;
 
-        //if (signed_tx_bytes_len * fee_per_byte) / 1000 == total_fee {
+        if (signed_tx_bytes_len * fee_per_byte) / 1000 == total_fee {
             print(&format!("Transaction built with fee {}.", total_fee));
-            return transaction;
-        //} else {
-            //total_fee = (signed_tx_bytes_len * fee_per_byte) / 1000;
-        //}
-    //}
-}
-
-pub struct BuiltTransactionOutput {
-    pub transaction: Transaction,
-    pub output_amount_satoshi: u64,
+            return built_transaction;
+        } else {
+            total_fee = (signed_tx_bytes_len * fee_per_byte) / 1000;
+        }
+    }
 }
 
 fn build_transaction_with_fee(
+    wallet: &CustodyWallet,
     own_utxos: &[Utxo],
-    own_address: &Address,
     dst_address: &Address,
     amount: u64,
     fee: u64,
@@ -324,10 +218,12 @@ fn build_transaction_with_fee(
     // problem as long as at most one transaction is created per block and
     // we're using min_confirmations of 1.
     let mut utxos_to_spend = vec![];
+    let mut input_amounts = vec![];
     let mut total_spent = 0;
     for utxo in own_utxos.iter().rev() {
         total_spent += utxo.value;
         utxos_to_spend.push(utxo);
+        input_amounts.push(Amount::from_sat(utxo.value));
         if total_spent >= amount + fee {
             // We have enough inputs to cover the amount we want to spend.
             break;
@@ -363,7 +259,7 @@ fn build_transaction_with_fee(
 
     if remaining_amount >= DUST_THRESHOLD {
         outputs.push(TxOut {
-            script_pubkey: own_address.script_pubkey(),
+            script_pubkey: wallet.address.script_pubkey(),
             value: Amount::from_sat(remaining_amount),
         });
     }
@@ -375,75 +271,55 @@ fn build_transaction_with_fee(
         lock_time: LockTime::ZERO, // @todo: verify
         version: bitcoin::blockdata::transaction::Version::ONE, // @todo: verify
         },
-        output_amount_satoshi: total_spent,
+        input_amounts: input_amounts,
     })
 }
 
-// Sign a bitcoin transaction.
-//
-// IMPORTANT: This method is for demonstration purposes only and it only
-// supports signing transactions if:
-//
-// 1. All the inputs are referencing outpoints that are owned by `own_address`.
-// 2. `own_address` is a P2PKH address.
-fn sign_transaction<SignFun>(
-    mut transaction: Transaction,
-    signer: SignFun,
-    own_utxos: &[Utxo],
+async fn sign_transaction(
+    wallet: &CustodyWallet,
+    mut built_transaction: BuiltTransactionOutput,
+    signing: SigningMethod,
 ) -> Transaction
-where
-    SignFun: Fn(&SecretKey, Vec<u8>) -> Vec<u8>,
 {
-//    // Verify that our own address is P2WSH.
-//    assert_eq!(
-//        own_address.address_type(),
-//        Some(AddressType::P2wsh),
-//        "This example supports signing p2wsh addresses only."
-//    );
-
-    let witness_script = create_multisig_2x2_witness_script();
-
-    let txclone = transaction.clone();
+    let txclone = built_transaction.transaction.clone();
     let mut cache = sighash::SighashCache::new(&txclone);
 
-    let len = transaction.input.len();
-
-    for (index, input) in transaction.input.iter_mut().enumerate() {
+    for (index, input) in built_transaction.transaction.input.iter_mut().enumerate() {
         // Clear any previous witness
         input.witness.clear();
 
-        let amount = own_utxos.get(len - index - 1).unwrap().value;
+        let amount = built_transaction.input_amounts.get(index).unwrap();
 
         let sighash = cache
-            .p2wsh_signature_hash(index, &witness_script, Amount::from_sat(amount), EcdsaSighashType::All).expect("failed to compute sighash");
+            .p2wsh_signature_hash(index, &wallet.witness_script, amount.clone(), EcdsaSighashType::All).expect("failed to compute sighash");
 
-        let (kp1, kp2) = generate_2_pairs_of_keys();
-        let mut signature_der_1 = signer(&kp1.secret_key(), sighash.to_byte_array().to_vec());
+        let (signature_1, signature_2) = match signing {
+            SigningMethod::Fake => (vec![255; 64], vec![255; 64]),
+            SigningMethod::Real => {
+                let message_hash = sighash.to_byte_array().to_vec();
+                // First sign with the current (custody_wallet) canister.
+                let sig1 = ecdsa_api::sign_with_ecdsa(wallet.key_name.clone(), vec![], message_hash.clone()).await;
+                // Then sign with the remote (fiduciary) canister.
+                let res_sig2: Result<(Result<Vec<u8>, String>,),_>  = call(
+                    wallet.fiduciary_canister,
+                    "sign_for_custody",
+                    (message_hash,),
+                ).await;
+                let sig2 = res_sig2.unwrap().0.unwrap();
+                (sig1, sig2)
+            },
+        };
+
+        let mut signature_der_1 = signature_1;
         signature_der_1.push(SIG_HASH_TYPE.to_u32() as u8);
-        let mut signature_der_2 = signer(&kp2.secret_key(), sighash.to_byte_array().to_vec());
+        let mut signature_der_2 = signature_2;
         signature_der_2.push(SIG_HASH_TYPE.to_u32() as u8);
 
         input.witness.push(vec![]);  // Placeholder for scriptSig
         input.witness.push(signature_der_1);
         input.witness.push(signature_der_2);
-        input.witness.push(witness_script.clone().into_bytes());
+        input.witness.push(wallet.witness_script.clone().into_bytes());
     }
 
-    transaction
-}
-
-fn mock_signer(
-    _sk: &SecretKey,
-    _message_hash: Vec<u8>,
-) -> Vec<u8> {
-    vec![255; 64]
-}
-
-fn sign_with_ecdsa(
-    sk: &SecretKey,
-    message_hash: Vec<u8>,
-) -> Vec<u8> {
-    let secp = Secp256k1::new();
-    let signature = Secp256k1::sign_ecdsa(&secp, &Message::from_digest_slice(&message_hash).unwrap(), &sk);
-    signature.serialize_der().to_vec()
+    built_transaction.transaction
 }

@@ -1,5 +1,11 @@
 {
   "btc_multisig": {
     "ic": "hys2h-6aaaa-aaaap-abqkq-cai"
+  },
+  "custody_wallet": {
+    "ic": "jpydr-piaaa-aaaap-abrja-cai"
+  },
+  "fiduciary": {
+    "ic": "jizff-cqaaa-aaaap-abrjq-cai"
   }
 }

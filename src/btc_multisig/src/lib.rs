@@ -18,24 +18,41 @@ thread_local! {
     // `Mainnet` is currently unsupported.
     static NETWORK: Cell<BitcoinNetwork> = Cell::new(BitcoinNetwork::Testnet);
 
-    // The derivation path to use for ECDSA secp256k1.
-    static DERIVATION_PATH: Vec<Vec<u8>> = vec![];
-
     // The ECDSA key name.
     static KEY_NAME: RefCell<String> = RefCell::new(String::from(""));
+
+    // The fiduciary canister.
+    static FIDUCIARY_ID: RefCell<Option<candid::Principal>> = RefCell::new(None);
+
+    // The custody wallet.
+    static CUSTODY_WALLET: RefCell<custody_wallet::CustodyWallet> = RefCell::default();
+}
+#[derive(Clone, Debug, candid::Deserialize, candid::CandidType)]
+pub struct InitArguments {
+    pub bitcoin_network: BitcoinNetwork,
+    pub fiduciary_id: candid::Principal,
 }
 
 #[init]
-pub fn init(network: BitcoinNetwork) {
-    NETWORK.with(|n| n.set(network));
+pub fn init(args: InitArguments) {
+
+    let key = String::from(match args.bitcoin_network {
+        // For local development, we use a special test key with dfx.
+        BitcoinNetwork::Regtest => "dfx_test_key",
+        // On the IC we're using a test ECDSA key.
+        BitcoinNetwork::Mainnet | BitcoinNetwork::Testnet => "test_key_1",
+    });
+
+    NETWORK.with(|n| 
+        n.set(args.bitcoin_network)
+    );
 
     KEY_NAME.with(|key_name| {
-        key_name.replace(String::from(match network {
-            // For local development, we use a special test key with dfx.
-            BitcoinNetwork::Regtest => "dfx_test_key",
-            // On the IC we're using a test ECDSA key.
-            BitcoinNetwork::Mainnet | BitcoinNetwork::Testnet => "test_key_1",
-        }))
+        key_name.replace(key);
+    });
+
+    FIDUCIARY_ID.with(|id| {
+        id.replace(Some(args.fiduciary_id));
     });
 }
 
@@ -61,90 +78,29 @@ pub async fn get_current_fee_percentiles() -> Vec<MillisatoshiPerByte> {
     bitcoin_api::get_current_fee_percentiles(network).await
 }
 
-///// Returns the P2PKH address of this canister at a specific derivation path.
-//#[update]
-//pub async fn get_p2pkh_address() -> String {
-//    let derivation_path = DERIVATION_PATH.with(|d| d.clone());
-//    let key_name = KEY_NAME.with(|kn| kn.borrow().to_string());
-//    let network = NETWORK.with(|n| n.get());
-//    bitcoin_wallet::get_p2pkh_address(network, key_name, derivation_path).await
-//}
-
-/// Returns the P2WPKH address @todo
-#[query]
-pub async fn get_p2wsh_multisig_2x2_address() -> String {
-    //let derivation_path = DERIVATION_PATH.with(|d| d.clone());
-    //let key_name = KEY_NAME.with(|kn| kn.borrow().to_string());
-    //let network = NETWORK.with(|n| n.get());
-    custody_wallet::get_p2wsh_multisig_2x2_address()
+#[update]
+pub async fn create_wallet() {
+    let network = NETWORK.with(|n| n.get());
+    let key = KEY_NAME.with(|kn| kn.borrow().to_string());
+    let fiduciary_id = FIDUCIARY_ID.with(|id| id.borrow().clone().unwrap());
+    let wallet = custody_wallet::new(network, key, fiduciary_id).await;
+    CUSTODY_WALLET.with(|custody_wallet| {
+        custody_wallet.replace(wallet);
+    });
 }
 
 #[query]
-pub async fn generate_first_pair_of_keys_string() -> (String, String) {
-    custody_wallet::generate_2_pairs_of_keys_string().0
+pub async fn get_address() -> String {
+    CUSTODY_WALLET.with(|w| w.borrow().address.to_string())
 }
 
-#[query]
-pub async fn generate_second_pair_of_keys_string() -> (String, String) {
-    custody_wallet::generate_2_pairs_of_keys_string().1
-}
-
+/// Sends the given amount of bitcoin from this canister to the given address.
+/// Returns the transaction ID.
 #[update]
-pub async fn script_sig(request: types::SendRequest) -> String {
-    let network = NETWORK.with(|n| n.get());
-    let hex = custody_wallet::script_sig(
-        network,
-        request.destination_address,
-        request.amount_in_satoshi,
-    )
-    .await;
-    hex
+pub async fn send(request: types::SendRequest) -> String {
+    let wallet = CUSTODY_WALLET.with(|w| w.borrow().clone());
+    custody_wallet::send(&wallet, request.destination_address, request.amount_in_satoshi).await.to_string()
 }
-
-#[update]
-pub async fn transaction_from_multisig_2x2(request: types::SendRequest) -> String {
-    let network = NETWORK.with(|n| n.get());
-    let tx = custody_wallet::transaction_from_multisig_2x2(
-        network,
-        request.destination_address,
-        request.amount_in_satoshi,
-    )
-    .await;
-
-    tx
-}
-
-#[update]
-pub async fn send_from_multisig_2x2(request: types::SendRequest) -> String {
-    let network = NETWORK.with(|n| n.get());
-    let tx_id = custody_wallet::send_from_multisig_2x2(
-        network,
-        request.destination_address,
-        request.amount_in_satoshi,
-    )
-    .await;
-
-    tx_id.to_string()
-}
-
-///// Sends the given amount of bitcoin from this canister to the given address.
-///// Returns the transaction ID.
-//#[update]
-//pub async fn send(request: types::SendRequest) -> String {
-//    let derivation_path = DERIVATION_PATH.with(|d| d.clone());
-//    let network = NETWORK.with(|n| n.get());
-//    let key_name = KEY_NAME.with(|kn| kn.borrow().to_string());
-//    let tx_id = bitcoin_wallet::send(
-//        network,
-//        derivation_path,
-//        key_name,
-//        request.destination_address,
-//        request.amount_in_satoshi,
-//    )
-//    .await;
-//
-//    tx_id.to_string()
-//}
 
 #[pre_upgrade]
 fn pre_upgrade() {
@@ -153,10 +109,15 @@ fn pre_upgrade() {
 }
 
 #[post_upgrade]
-fn post_upgrade() {
-    let network = ic_cdk::storage::stable_restore::<(BitcoinNetwork,)>()
+async fn post_upgrade() {
+    let bitcoin_network = ic_cdk::storage::stable_restore::<(BitcoinNetwork,)>()
         .expect("Failed to read network from stable memory.")
         .0;
+    let fiduciary_id = FIDUCIARY_ID.with(|id| id.borrow().clone().unwrap());
 
-    init(network);
+    init({
+        InitArguments {
+            bitcoin_network,
+            fiduciary_id,
+        }});
 }
