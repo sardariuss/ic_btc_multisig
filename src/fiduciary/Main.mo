@@ -1,7 +1,7 @@
 import Types    "Types";
 import EcdsaApi "EcdsaApi";
 
-import R        "mo:base/Result";
+import D        "mo:base/Debug";
 import P        "mo:base/Principal";
 import B        "mo:base/Blob";
 
@@ -21,14 +21,14 @@ shared actor class Fiduciary({bitcoin_network; custody_id;}: Types.FiduciaryArgs
   stable let _custody_id      = custody_id;
 
   public shared func public_key(): async Blob {
-    await EcdsaApi.ecdsa_public_key(_key_name, _derivation_path);
+    await EcdsaApi.ecdsa_public_key(_key_name, _derivation_path)
   };
 
-  public shared({caller}) func sign_for_custody(message_hash: Blob): async R.Result<Blob, Text> {
+  public shared({caller}) func sign_for_custody(message_hash: Blob): async Blob {
     if (caller != _custody_id) {
-      return #err("Only the custody canister '" # P.toText(_custody_id) # "'' is allowed to request a signature");
+      D.trap("Only the custody canister '" # P.toText(_custody_id) # "'' is allowed to request a signature");
     };
-    #ok(await EcdsaApi.sign_with_ecdsa(_key_name, _derivation_path, message_hash));
+    await EcdsaApi.sign_with_ecdsa(_key_name, _derivation_path, message_hash)
   };
   
 };

@@ -3,7 +3,7 @@ use candid::Principal;
 use ic_cdk::{api::call::call_with_payment, call};
 
 // The fee for the `sign_with_ecdsa` endpoint using the test key.
-const SIGN_WITH_ECDSA_COST_CYCLES: u64 = 10_000_000_000;
+const SIGN_WITH_ECDSA_COST_CYCLES: u64 = 25_000_000_000;
 
 /// Returns the ECDSA public key of this canister at the given derivation path.
 pub async fn ecdsa_public_key(key_name: String, derivation_path: Vec<Vec<u8>>, canister_id: Option<Principal>) -> Vec<u8> {

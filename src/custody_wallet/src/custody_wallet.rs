@@ -1,6 +1,6 @@
 /// @todo
 use crate::{bitcoin_api, ecdsa_api};
-use bitcoin::{Sequence, ScriptHash};
+use bitcoin::Sequence;
 use bitcoin::absolute::LockTime;
 use bitcoin::address::NetworkChecked;
 use secp256k1::PublicKey;
@@ -38,6 +38,7 @@ pub struct BuiltTransactionOutput {
     pub transaction: Transaction,
     pub input_amounts: Vec<Amount>,
 }
+
 #[derive(Clone)]
 pub struct CustodyWallet {
     pub network: BitcoinNetwork,
@@ -54,8 +55,7 @@ impl Default for CustodyWallet {
             key_name: String::from(""),
             fiduciary_canister: candid::Principal::anonymous(),
             witness_script: ScriptBuf::new(),
-            //address: Address::new(Network::Regtest, bitcoin::address::Payload::ScriptHash(ScriptHash::from_str("").unwrap())),
-            address: Address::from_str("mopkf9Tud7qGd5nyT1qfvBMabYeemy92Pu").unwrap().assume_checked(),
+            address: Address::from_str("mopkf9Tud7qGd5nyT1qfvBMabYeemy92Pu").unwrap().assume_checked(), // @todo
         }
     }
 }
@@ -71,7 +71,7 @@ pub async fn new(network: BitcoinNetwork, key_name: String, fiduciary_canister: 
     )
     .await;
 
-    let pk2 = fiduciary_pk.unwrap().0;
+    let pk2 = fiduciary_pk.expect("Failed to obtain public key from fiduciary canister.").0;
   
     // Create a 2-of-2 multisig witness script.
     let witness_script = bitcoin::blockdata::script::Builder::new()
@@ -84,7 +84,14 @@ pub async fn new(network: BitcoinNetwork, key_name: String, fiduciary_canister: 
 
     let script_pub_key = ScriptBuf::new_p2wsh(&witness_script.wscript_hash());
 
-    let address = bitcoin::Address::from_script(&script_pub_key, match_network(network)).unwrap();
+    let address = match bitcoin::Address::from_script(&script_pub_key, match_network(network)) {
+        Ok(address) => {
+           address
+        }
+        Err(error) => {
+            panic!("Failed to generate bitcoin address from P2WSH script pubkey: {}", error);
+        }
+    };
 
     CustodyWallet {
         network,
@@ -300,13 +307,13 @@ async fn sign_transaction(
                 // First sign with the current (custody_wallet) canister.
                 let sig1 = ecdsa_api::sign_with_ecdsa(wallet.key_name.clone(), vec![], message_hash.clone()).await;
                 // Then sign with the remote (fiduciary) canister.
-                let res_sig2: Result<(Result<Vec<u8>, String>,),_>  = call(
+                let res_sig2: Result<(Vec<u8>,),_>  = call(
                     wallet.fiduciary_canister,
                     "sign_for_custody",
                     (message_hash,),
                 ).await;
-                let sig2 = res_sig2.unwrap().0.unwrap();
-                (sig1, sig2)
+                let sig2 = res_sig2.unwrap().0;
+                (sec1_to_der(sig1), sec1_to_der(sig2))
             },
         };
 
@@ -322,4 +329,38 @@ async fn sign_transaction(
     }
 
     built_transaction.transaction
+}
+
+// Converts a SEC1 ECDSA signature to the DER format.
+fn sec1_to_der(sec1_signature: Vec<u8>) -> Vec<u8> {
+    let r: Vec<u8> = if sec1_signature[0] & 0x80 != 0 {
+        // r is negative. Prepend a zero byte.
+        let mut tmp = vec![0x00];
+        tmp.extend(sec1_signature[..32].to_vec());
+        tmp
+    } else {
+        // r is positive.
+        sec1_signature[..32].to_vec()
+    };
+
+    let s: Vec<u8> = if sec1_signature[32] & 0x80 != 0 {
+        // s is negative. Prepend a zero byte.
+        let mut tmp = vec![0x00];
+        tmp.extend(sec1_signature[32..].to_vec());
+        tmp
+    } else {
+        // s is positive.
+        sec1_signature[32..].to_vec()
+    };
+
+    // Convert signature to DER.
+    vec![
+        vec![0x30, 4 + r.len() as u8 + s.len() as u8, 0x02, r.len() as u8],
+        r,
+        vec![0x02, s.len() as u8],
+        s,
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }

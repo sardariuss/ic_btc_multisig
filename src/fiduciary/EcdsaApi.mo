@@ -16,7 +16,7 @@ module {
   };
 
   // The fee for the `sign_with_ecdsa` endpoint using the test key.
-  let SIGN_WITH_ECDSA_COST_CYCLES : Cycles = 10_000_000_000;
+  let SIGN_WITH_ECDSA_COST_CYCLES : Cycles = 25_000_000_000;
 
   let ecdsa_canister_actor : EcdsaCanisterActor = actor("aaaaa-aa");
 

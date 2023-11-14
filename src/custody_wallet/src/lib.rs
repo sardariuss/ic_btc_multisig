@@ -1,5 +1,4 @@
 mod bitcoin_api;
-mod bitcoin_wallet;
 mod custody_wallet;
 mod ecdsa_api;
 mod types;
@@ -104,16 +103,15 @@ pub async fn send(request: types::SendRequest) -> String {
 
 #[pre_upgrade]
 fn pre_upgrade() {
-    let network = NETWORK.with(|n| n.get());
-    ic_cdk::storage::stable_save((network,)).expect("Saving network to stable store must succeed.");
+    let bitcoin_network = NETWORK.with(|n| n.get());
+    let fiduciary_id = FIDUCIARY_ID.with(|id| id.borrow().clone().unwrap());
+    ic_cdk::storage::stable_save((bitcoin_network, fiduciary_id,)).expect("Saving bitcoin network and fiduciary ID to stable store must succeed.");
 }
 
 #[post_upgrade]
 async fn post_upgrade() {
-    let bitcoin_network = ic_cdk::storage::stable_restore::<(BitcoinNetwork,)>()
-        .expect("Failed to read network from stable memory.")
-        .0;
-    let fiduciary_id = FIDUCIARY_ID.with(|id| id.borrow().clone().unwrap());
+    let (bitcoin_network, fiduciary_id) = ic_cdk::storage::stable_restore::<(BitcoinNetwork, candid::Principal)>()
+        .expect("Failed to read bitcoin network and fiduciary ID from stable memory.");
 
     init({
         InitArguments {
