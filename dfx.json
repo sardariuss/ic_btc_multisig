@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "canisters": {
     "custody_wallet": {
       "type": "custom",
@@ -19,24 +19,40 @@
         "declarations": {
           "output": "src/fiduciary/declarations/"
         }
+    },
+    "internet_identity": {
+      "type": "custom",
+      "candid": "https://github.com/dfinity/internet-identity/releases/latest/download/internet_identity.did",
+      "wasm": "https://github.com/dfinity/internet-identity/releases/latest/download/internet_identity_dev.wasm.gz",
+      "remote": {
+        "id": {
+          "ic": "rdmx6-jaaaa-aaaaa-aaadq-cai"
+        }
+      },
+      "frontend": {}
+    },
+    "frontend": {
+      "frontend": {
+        "entrypoint": "frontend/index.html"
+      },
+      "dependencies": ["custody_wallet"],
+      "type": "assets",
+      "source": ["dist/"]
     }
   },
   "defaults": {
     "bitcoin": {
       "enabled": true,
-      "nodes": [
-        "127.0.0.1:18444"
-      ],
       "log_level": "info"
     },
     "build": {
-      "packtool": "",
-      "args": ""
+      "packtool": ""
     }
   },
   "networks": {
     "local": {
       "bind": "127.0.0.1:4943"
     }
-  }
+  },
+  "output_env_file": ".env"
 }

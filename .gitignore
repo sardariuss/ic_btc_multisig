@@ -9,6 +9,14 @@
 
 # dfx temporary files
 .dfx/
+.env
 
 # rust
 target/
+
+# generated files
+declarations/
+
+# frontend code
+node_modules/
+dist/
