@@ -12,7 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 
-import { clampNumber, generateNumberRegex, getFormControlProps } from "./utils";
+import { clampNumber, generateNumberRegex, getFormControlProps } from "../utils";
 
 interface NumberInputProps
   extends Omit<OutlinedInputProps, "value" | "onChange"> {

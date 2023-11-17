@@ -1,119 +1,71 @@
-import icLogo                         from './assets/ic.svg';
-import { createActor } from './AgentUtils';
-import NumberInput from './NumberInput';
-import { ActorSubclass } from '@dfinity/agent';
-import mainnetLogo                    from './assets/bitcoin_mainnet.svg';
-import testnetLogo                    from './assets/bitcoin_testnet.svg';
-import regtestLogo                    from './assets/bitcoin_regtest.svg';
-import { AuthClient }                 from '@dfinity/auth-client';
+import                                             './App.css';
+import icLogo                                      from './assets/ic.svg';
+import mainnetLogo                                 from './assets/bitcoin_mainnet.svg';
+import testnetLogo                                 from './assets/bitcoin_testnet.svg';
+import regtestLogo                                 from './assets/bitcoin_regtest.svg';
 
-import LoadingButton from '@mui/lab/LoadingButton';
-import SendIcon from '@mui/icons-material/Send';
-import { Popover } from '@mui/material';
-import Typography from '@mui/material/Typography';
-import Button from '@mui/material/Button';
-import PopupState, { bindTrigger, bindPopover } from 'material-ui-popup-state';
-import TextField from '@mui/material/TextField';
-import { Refresh } from '@mui/icons-material';
-import IconButton from '@mui/material/IconButton';
-import Box from '@mui/material/Box';
+import { frome8s, networkToString, networkToLogo } from './utils';
+import { network }                                 from '../declarations/custody_wallet/custody_wallet.did';
 
-import InputLabel from '@mui/material/InputLabel';
-import MenuItem from '@mui/material/MenuItem';
-import FormControl from '@mui/material/FormControl';
-import Select, { SelectChangeEvent } from '@mui/material/Select';
+import NumberInput                                 from './components/NumberInput';
+import Title                                       from './components/Title';
+import { Context, useContext }                     from './components/Context';
+import TextSnackbar                                from './components/TextSnackbar';
 
-import { frome8s } from './utils';
+import LoadingButton                               from '@mui/lab/LoadingButton';
+import TabContext                                  from '@mui/lab/TabContext';
+import TabList                                     from '@mui/lab/TabList';
+import TabPanel                                    from '@mui/lab/TabPanel';
 
-import { _SERVICE, network } from '../declarations/custody_wallet/custody_wallet.did';
-import { canisterId, idlFactory }  from "../declarations/custody_wallet";
-import React, { useEffect, useState } from 'react';
-import                                './App.css';
+import SendIcon                                    from '@mui/icons-material/Send';
+import { Refresh }                                 from '@mui/icons-material';
+import CopyIcon                                    from '@mui/icons-material/FileCopy';
 
+import PopupState, { bindTrigger, bindPopover }    from 'material-ui-popup-state';
+import { Popover }                                 from '@mui/material';
+import Button                                      from '@mui/material/Button';
+import TextField                                   from '@mui/material/TextField';
+import IconButton                                  from '@mui/material/IconButton';
+import Box                                         from '@mui/material/Box';
+import CircularProgress                            from '@mui/material/CircularProgress';
+import Tab                                         from '@mui/material/Tab';
 
+import { QRCodeSVG }                               from 'qrcode.react';
 
-const networkToString = (btc_network: any) => {
-  if (btc_network['mainnet'] !== undefined) return "Mainnet";
-  if (btc_network['regtest'] !== undefined) return "Regtest";
-  if (btc_network['testnet'] !== undefined) return "Testnet";
-}
+import InputLabel                                  from '@mui/material/InputLabel';
+import MenuItem                                    from '@mui/material/MenuItem';
+import FormControl                                 from '@mui/material/FormControl';
+import Select                                      from '@mui/material/Select';
+
+import React, { useEffect, useState }              from 'react';
 
 function App() {
 
-  const [authClient, setAuthClient] = useState<AuthClient | undefined>(undefined);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [walletActor,          setWalletActor         ] = useState<ActorSubclass<_SERVICE> | undefined>(undefined);
+  const {
+    authClient,
+    isAuthenticated,
+    walletActor,
+    login,
+    logout,
+  } = useContext();
+
+  // Wallet
   const [bitcoinNetwork, setBitcoinNetwork] = useState<network | undefined>(undefined);
-  const [walletAddress, setWalletAddress] = useState<string | undefined>(undefined);
-  const [balanceSats, setBalanceSats] = useState<bigint | undefined>(undefined);
-  const [destination, setDestination] = useState<string>("");
-  const [amount, setAmount] = useState<bigint>(BigInt(0));
+  const [walletAddress,  setWalletAddress ] = useState<string | undefined> (undefined);
+  const [balanceSats,    setBalanceSats   ] = useState<bigint | undefined> (undefined);
+
+  // Toggle between tabs
+  const [activeTab,      setActiveTab     ] = useState<string>             ("Send"   );
   
   // Send
-  const [sending, setSending] = useState<boolean>(false);
-  const [sendLoading, setSendLoading] = useState<boolean>(false);
-  const [sentOutput, setSentOutput] = useState<string | undefined>(undefined);
-
-  // Balance
-  const [balanceLoading, setBalanceLoading] = useState<boolean>(false);
-
-  const refreshAuthClient = () => {
-    AuthClient.create({
-      idleOptions: {
-        captureScroll: true,
-        idleTimeout: 900000, // 15 minutes
-        disableDefaultIdleCallback: true // disable the default reload behavior
-      },
-    }).then(async (client) => {
-      // Refresh the authentification client and status
-      const is_authenticated = await client.isAuthenticated();
-      setIsAuthenticated(is_authenticated);
-      setAuthClient(client);
-      // Set callback on idle to logout the user
-      client.idleManager?.registerCallback?.(() => logout(client));
-    })
-    .catch((error) => {
-      console.error(error);
-      setAuthClient(undefined);
-      setIsAuthenticated(false);
-    });
-  };
-
-  const login = () => {
-    authClient?.login({
-      identityProvider:
-        import.meta.env.DFX_NETWORK === "ic" ? 
-          `https://identity.ic0.app/#authorize` : 
-          `http://localhost:${import.meta.env.DFX_REPLICA_PORT}?canisterId=${import.meta.env.CANISTER_ID_INTERNET_IDENTITY}#authorize`,
-      onSuccess: () => { 
-        setIsAuthenticated(true);
-        // navigate("/"); @todo
-      },
-    });
-  };
-
-  const logout = (client: AuthClient | undefined) => {
-    client?.logout().then(() => {
-      // Somehow if only the isAuthenticated flag is set to false, the next login will fail
-      // Refreshing the auth client fixes this behavior
-      refreshAuthClient();
-      //navigate("/login"); @todo
-    });
-  }
-
-  const refreshWalletActor = async () => {
-    setWalletActor(
-      await createActor({
-        canisterId,
-        idlFactory,
-        identity: authClient?.getIdentity(), 
-      })
-    );
-  }
+  const [destination,    setDestination   ] = useState<string>             (""       );
+  const [amount,         setAmount        ] = useState<bigint>             (BigInt(0));
+  const [sendLoading,    setSendLoading   ] = useState<boolean>            (false    );
+  const [sentSuccess,    setSentSuccess   ] = useState<boolean>            (false    );
+  const [sentOutput,     setSentOutput    ] = useState<string>             (""       );
 
   const refreshNetwork = async () => {
     let network = await walletActor?.get_network();
-    console.log(network !== undefined ? networkToString(network) : "Unknown");
     setBitcoinNetwork(network);
   }
 
@@ -125,12 +77,11 @@ function App() {
   }
 
   const refreshBalance = () => {
-    setBalanceLoading(true);
+    setBalanceSats(undefined);
     if (walletAddress !== undefined){
       walletActor?.get_balance(walletAddress).then((balance) => {
         setBalanceSats(balance);
       }).finally(() => {
-        setBalanceLoading(false);
       });
     }
   }
@@ -139,25 +90,17 @@ function App() {
     if (walletActor !== undefined && destination !== undefined){
       setSendLoading(true);
       walletActor?.wallet_send({destination_address: destination, amount_in_satoshi: amount}).then((tx_id) => {
-        setSentOutput("Transaction sent : " + tx_id);
+        setSentSuccess(true);
+        setSentOutput("Transaction id: " + tx_id);
         refreshBalance();
       }).catch((error) => {
-        setSentOutput("Transaction failed : " + error);
+        setSentSuccess(false);
+        setSentOutput("Error: " + error);
       }).finally(() => {
         setSendLoading(false);
       });
     }
   }
-
-  // Refresh the auth client on page load
-  useEffect(() => {
-    refreshAuthClient();
-  }, []);
-
-  // Refresh the wallet actor on auth client change
-  useEffect(() => {
-    refreshWalletActor();
-  }, [authClient]);
 
   // Refresh the wallet address on wallet actor change
   useEffect(() => {
@@ -165,142 +108,189 @@ function App() {
     refreshUserWallet();
   }, [walletActor]);
 
+  if (!authClient) return null;
+
   return (
-    <div className="flex flex-col items-center w-full">
-      {
-        isAuthenticated ? 
-        <div className="flex flex-col">
-          <FormControl fullWidth>
-            <InputLabel id="demo-simple-select-label">Bitcoin network</InputLabel>
-            <Select
-              labelId="demo-simple-select-label"
-              id="demo-simple-select"
-              value={bitcoinNetwork !== undefined ? networkToString(bitcoinNetwork) : ""}
-              label="Bitcoin network"
-            >
-              <MenuItem value={"Mainnet"} className="flex flex-row items-center gap-x-1">
-                <img src={mainnetLogo} className="w-5 h-5"></img>
-                <span>Mainnet</span>
-              </MenuItem>
-              <MenuItem value={"Testnet"} className="flex flex-row items-center gap-x-1">
-                <img src={testnetLogo} className="w-5 h-5"></img>
-                <span>Testnet</span>
-              </MenuItem>
-              <MenuItem value={"Regtest"} className="flex flex-row items-center gap-x-1">
-                <img src={regtestLogo} className="w-5 h-5"></img>
-                <span>Regtest</span>
-              </MenuItem>
-            </Select>
-          </FormControl>
-          <div>
-            Address : {walletAddress}
-          </div>
-          <div className="flex flex-row space-x-1 items-center">
-            <LoadingButton
-              size="small"
-              onClick={(e) => refreshBalance()}
-              startIcon={<Refresh />}
-              loading={balanceLoading}
-              variant="text"
-            />
-            <span>
-              { balanceSats !== undefined ? frome8s(balanceSats).toFixed(8) : ""}
-            </span>
-            <span>
-              { balanceSats !== undefined ? "btc" : "" }
-            </span>
-          </div>
-          <div className="grid grid-cols-2 items-center">
-            <span>
-              Destination
-            </span>
-            <TextField
-              id="outlined-controlled"
-              label="btc address"
-              value={destination}
-              onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
-                setDestination(event.target.value);
-              }}
-            />
-            <span>
-              Amount
-            </span>
-            <NumberInput
-              label=""
-              min={0}
-              initialValue={0}
-              onChange={(n) => setAmount(BigInt(n))}
-              unit="sats"
-            />
-          </div>
-          <PopupState variant="popover" popupId="demo-popup-popover">
-            {(popupState) => (
-              <div>
-                <Button variant="contained" {...bindTrigger(popupState)}>
-                  Send
-                </Button>
-                <Popover
-                  {...bindPopover(popupState)}
-                  anchorOrigin={{
-                    vertical: 'bottom',
-                    horizontal: 'center',
-                  }}
-                  transformOrigin={{
-                    vertical: 'top',
-                    horizontal: 'center',
-                  }}
+    <Context.Provider value={{
+      authClient,
+      isAuthenticated,
+      walletActor,
+      login,
+      logout,
+    }}>
+      <div className="flex flex-col items-center w-full min-h-screen grow">
+        {
+          isAuthenticated ? 
+          <div className="flex flex-col items-center w-full grow">
+            <div className="py-6">
+              <Title/>
+              <div className="flex flex-row justify-center gap-x-5">
+                <a href="https://internetcomputer.org/" target="_blank" className="h-12 w-24">
+                  <img src={icLogo} className="logo ic" alt="" />
+                </a>
+                <a href="https://bitcoin.org/" target="_blank" className="h-12 w-12">
+                  <img src={mainnetLogo} className="logo btc" alt="Bitcoin logo" />
+                </a>
+              </div>
+            </div>
+            <div className="flex flex-col w-1/3 items-center grow">
+              <FormControl fullWidth>
+                <InputLabel id="demo-simple-select-label">Bitcoin network</InputLabel>
+                <Select
+                  labelId="demo-simple-select-label"
+                  id="demo-simple-select"
+                  value={bitcoinNetwork !== undefined ? networkToString(bitcoinNetwork) : ""}
+                  label="Bitcoin network"
                 >
-                  <div>
-                    <Typography sx={{ p: 2 }}>Send {amount.toString()} to {destination} ?</Typography>
-                    <LoadingButton
-                      size="small"
-                      onClick={(e) => setSending(true)}
-                      endIcon={<SendIcon />}
-                      loading={sendLoading}
-                      variant="contained"
-                    >
-                      <span>Confirm</span>
-                    </LoadingButton>
+                  <MenuItem value={"Mainnet"}>
+                    <div className="flex flex-row items-center gap-x-1">
+                      <img src={mainnetLogo} className="w-5 h-5"></img>
+                      <span>Mainnet</span>
+                    </div>
+                  </MenuItem>
+                  <MenuItem value={"Testnet"}>
+                    <div className="flex flex-row items-center gap-x-1">
+                      <img src={testnetLogo} className="w-5 h-5"></img>
+                      <span>Testnet</span>
+                    </div>
+                  </MenuItem>
+                  <MenuItem value={"Regtest"}>
+                    <div className="flex flex-row items-center gap-x-1">
+                      <img src={regtestLogo} className="w-5 h-5"></img>
+                      <span>Regtest</span>
+                    </div>
+                  </MenuItem>
+                </Select>
+              </FormControl>
+              <div className="py-4">
+                {
+                  balanceSats === undefined ?
+                  <CircularProgress size={24}/> :
+                  <div className="flex flex-row space-x-1 items-center justify-center py-4">
+                    <IconButton onClick={(e) => refreshBalance()}>
+                      <Refresh />
+                    </IconButton>
+                    <span className="text-3xl">
+                      { balanceSats !== undefined ? frome8s(balanceSats).toFixed(8) : ""}
+                    </span>
+                    <span className="text-xl self-end">
+                      { balanceSats !== undefined ? "btc" : "" }
+                    </span>
                   </div>
-                  <div>
-                    {sentOutput}
+                }
+              </div>
+              <div className="flex flex-col grow">
+                <TabContext value={activeTab}>
+                  <div className="flex flex-row space-x-1 items-center justify-center w-full">
+                    <TabList onChange={(event, tab) => setActiveTab(tab)} aria-label="tabs">
+                      <Tab label="Send"    value="Send"    sx={{width:300, fontSize:16, fontWeight: "bold"}}/>
+                      <Tab label="Receive" value="Receive" sx={{width:300, fontSize:16, fontWeight: "bold"}}/>
+                    </TabList>
                   </div>
-                </Popover>
+                  <TabPanel value="Send">
+                    <div className="flex flex-col items-center gap-y-5">
+                      <div className="grid grid-cols-2 items-center space-y-2">
+                        <span className="text-lg">
+                          Destination
+                        </span>
+                        <TextField
+                          id="outlined-controlled"
+                          label="btc address"
+                          value={destination}
+                          onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
+                            setDestination(event.target.value);
+                          }}
+                        />
+                        <span className="text-lg">
+                          Amount
+                        </span>
+                        <NumberInput
+                          label=""
+                          min={0}
+                          initialValue={0}
+                          onChange={(n) => setAmount(BigInt(n))}
+                          unit="sats"
+                        />
+                      </div>
+                      <PopupState variant="popover" popupId="demo-popup-popover">
+                        {(popupState) => (
+                          <div>
+                            <Button size="large" variant="contained" {...bindTrigger(popupState)} disabled={destination.length === 0 || amount < 1}>
+                              Send
+                            </Button>
+                            <Popover
+                              {...bindPopover(popupState)}
+                              anchorOrigin={{
+                                vertical: 'center',
+                                horizontal: 'center',
+                              }}
+                              transformOrigin={{
+                                vertical: 'center',
+                                horizontal: 'center',
+                              }}
+                            >
+                              <Box sx={{ px: 5, py: 2, m: 5 }}>
+                                <div className="flex flex-col items-center gap-y-5 break-all">
+                                  <span className="text-xl">Send {frome8s(amount).toFixed(8)} btc to {destination} ?</span>
+                                  <LoadingButton
+                                    size="large"
+                                    onClick={(e) => { walletSend(); }}
+                                    endIcon={<SendIcon />}
+                                    loading={sendLoading}
+                                    variant="contained"
+                                  >
+                                    <span>Confirm</span>
+                                  </LoadingButton>
+                                </div>
+                                <TextSnackbar success={sentSuccess} message={sentOutput} setMessage={setSentOutput}/>
+                              </Box>
+                            </Popover>
+                          </div>
+                        )}
+                      </PopupState>
+                    </div>
+                  </TabPanel>
+                  <TabPanel value="Receive">
+                    {
+                      walletAddress === undefined ? <></> :
+                      <div className="flex flex-col items-center gap-y-5">
+                        <span className="self-start">BTC {networkToString(bitcoinNetwork)} address:</span>
+                        <div className="flex flex-row gap-x-1 items-center">
+                          <span className="text-xl break-all">{walletAddress}</span>
+                          <IconButton onClick={(e) => navigator.clipboard.writeText(walletAddress)}>
+                            <CopyIcon />
+                          </IconButton>
+                        </div>
+                        <QRCodeSVG value={"bitcoin:" + walletAddress} height={300} width={300} imageSettings={{src: networkToLogo(bitcoinNetwork), height:25, width:25, excavate: true}}/>
+                      </div>
+                    }
+                  </TabPanel>
+                </TabContext>
               </div>
-            )}
-          </PopupState>
-          <Button variant="contained" onClick={() => logout(authClient)}>
-            Logout
-          </Button>
-        </div> :
-        <div className="w-full">
-          <div className="flex flex-row justify-center gap-x-5">
-            <a href="https://internetcomputer.org/" target="_blank" className="ic">
-              <div className="glitch">
-                <img src={icLogo} className="logo" alt="" />
-                <div className="glitch__layers">
-                  <div className="glitch__layer"></div>
-                  <div className="glitch__layer"></div>
-                  <div className="glitch__layer"></div>
-                </div>
+              <div className="mb-10">
+                <Button variant="outlined" size="large" onClick={() => logout(authClient)}>
+                  Logout
+                </Button>
               </div>
-            </a>
-            <a href="https://bitcoin.org/" target="_blank">
-              <img src={mainnetLogo} className="logo btc" alt="Bitcoin logo" />
-            </a>
-          </div>
-          <h1>Multi-subnet Bitcoin wallet</h1>
-          <div className="card">
-            <button onClick={login}>
+            </div>
+          </div> :
+          <div className="w-full flex flex-col items-center grow justify-center gap-y-10">
+            <div className="flex flex-row justify-center gap-x-5">
+              <a href="https://internetcomputer.org/" target="_blank" className="h-24 w-48">
+                <img src={icLogo} className="logo ic" alt="" />
+              </a>
+              <a href="https://bitcoin.org/" target="_blank">
+                <img src={mainnetLogo} className="logo btc h-24 w-24" alt="Bitcoin logo"/>
+              </a>
+            </div>
+            <Title/>
+            <Button variant="outlined" size="large" onClick={login}>
               Login
-            </button>
+            </Button>
           </div>
-          <p className="read-the-docs">
-            @todo
-          </p>
-        </div>
-      }
-    </div>
+        }
+      </div>
+    </Context.Provider>
   );
 }
 

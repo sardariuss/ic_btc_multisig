@@ -3,8 +3,7 @@ module.exports = {
 	theme: {
 		fontFamily: {
 			inter: "'Inter', sans-serif",
-			ultra: "'Ultra', sans-serif",
-			archivo_black: "'Archivo Black', sans-serif",
+			vt323: "'VT323', sans-serif",
 		},
 	},
 	plugins: [],
