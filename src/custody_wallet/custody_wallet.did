@@ -39,6 +39,8 @@ type init_args = record {
 
 service : (init_args) -> {
 
+    "get_network": () -> (network);
+
     "get_balance": (address: bitcoin_address) -> (satoshi);
 
     "get_utxos": (bitcoin_address) -> (get_utxos_response);

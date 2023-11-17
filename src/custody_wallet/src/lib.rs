@@ -7,7 +7,7 @@ use ic_cdk::api::management_canister::bitcoin::{
     BitcoinNetwork, GetUtxosResponse, MillisatoshiPerByte,
 };
 use ic_cdk::api;
-use ic_cdk_macros::{init, post_upgrade, pre_upgrade, update};
+use ic_cdk_macros::{init, post_upgrade, pre_upgrade, update, query};
 use std::cell::{Cell, RefCell};
 
 thread_local! {
@@ -64,6 +64,11 @@ pub fn init(args: InitArguments) {
     CUSTODY_WALLET.with(|wallet| {
         wallet.replace(custody_wallet);
     });
+}
+
+#[query]
+pub async fn get_network() -> BitcoinNetwork {
+    NETWORK.with(|n| n.get())
 }
 
 /// Returns the balance of the given bitcoin address.
