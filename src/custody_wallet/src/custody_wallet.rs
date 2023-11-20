@@ -1,4 +1,3 @@
-/// @todo
 use crate::{bitcoin_api, ecdsa_api};
 use bitcoin::Sequence;
 use bitcoin::absolute::LockTime;
@@ -22,6 +21,8 @@ use std::str::FromStr;
 
 const SIG_HASH_TYPE: EcdsaSighashType = EcdsaSighashType::All;
 
+// Utility function to translate the bitcoin network from the IC cdk 
+// to the bitoin network of the rust-bitcoin library.
 fn match_network(bitcoin_network: BitcoinNetwork) -> Network {
     match bitcoin_network {
         BitcoinNetwork::Mainnet => Network::Bitcoin,
@@ -30,61 +31,97 @@ fn match_network(bitcoin_network: BitcoinNetwork) -> Network {
     }
 }
 
+// Signing method: fake is used to estimate the transaction size,
+// real (threshold-ecdsa) is used to sign the transaction.
 enum SigningMethod {
     Fake,
     Real,
 }
 
+// Output of the build_transaction function.
+// Contains the transaction and the amounts of the inputs.
 #[derive(Clone)]
-pub struct BuiltTransactionOutput {
+pub struct TransactionInfo {
     pub transaction: Transaction,
     pub input_amounts: Vec<Amount>,
 }
+
+// Information about a user wallet.
 #[derive(Clone)]
-pub struct WalletInfo {
+pub struct UserWallet {
     pub witness_script: ScriptBuf,
     pub address: Address<NetworkChecked>,
     pub derivation_path: Vec<Vec<u8>>,
 }
 
 #[derive(Clone)]
-pub struct CustodyWallet {
+pub struct CustodyInfo {
     pub network: BitcoinNetwork,
     pub key_name: String,
     pub fiduciary_canister: candid::Principal,
-    pub wallets: HashMap<candid::Principal, WalletInfo>,
 }
 
-impl Default for CustodyWallet {
+impl Default for CustodyInfo {
+    // Default constructor.
     fn default() -> Self {
-        CustodyWallet {
-            network: BitcoinNetwork::Regtest,
-            key_name: String::from(""),
-            fiduciary_canister: candid::Principal::anonymous(),
-            wallets: HashMap::new(),
+        CustodyInfo {
+            network: BitcoinNetwork::default(),
+            key_name: String::default(),
+            fiduciary_canister: Principal::anonymous(),
         }
     }
 }
 
-impl CustodyWallet {
+impl CustodyInfo {
+    // Constructor.
     pub fn new(network: BitcoinNetwork, key_name: String, fiduciary_canister: candid::Principal) -> Self {
-        CustodyWallet {
+        CustodyInfo {
             network,
             key_name,
             fiduciary_canister,
-            wallets: HashMap::new(),
         }
     }
 }
 
-pub async fn get_or_create_wallet(custody_wallet: &mut CustodyWallet, principal: candid::Principal) -> Address<NetworkChecked> {
+// Main data structure. Contains the user wallets and the 
+// general information required to sign transactions.
+#[derive(Clone)]
+pub struct CustodyData {
+    pub info: CustodyInfo,
+    pub user_wallets: HashMap<candid::Principal, UserWallet>,
+}
+
+impl Default for CustodyData {
+    // Default constructor.
+    fn default() -> Self {
+        CustodyData {
+            info: CustodyInfo::default(),
+            user_wallets: HashMap::new(),
+        }
+    }
+}
+
+impl CustodyData {
+    // Constructor.
+    pub fn new(network: BitcoinNetwork, key_name: String, fiduciary_canister: candid::Principal) -> Self {
+        CustodyData {
+            info: CustodyInfo::new(network, key_name, fiduciary_canister),
+            user_wallets: HashMap::new(),
+        }
+    }
+}
+
+// Get or create the wallet address for a given principal.
+// If there is no wallet for this principal, it is created and added to the custody wallet.
+// Otherwise, the existing wallet address is returned.
+pub async fn get_or_create_wallet(custody_data: &mut CustodyData, principal: candid::Principal) -> Address<NetworkChecked> {
 
     if Principal::anonymous() == principal {
         panic!("Principal cannot be anonymous.");
     }
 
     // Check if we already have a wallet for this principal.
-    match custody_wallet.wallets.get(&principal) {
+    match custody_data.user_wallets.get(&principal) {
         Some(wallet) => {
             return wallet.address.clone();
         },
@@ -95,17 +132,17 @@ pub async fn get_or_create_wallet(custody_wallet: &mut CustodyWallet, principal:
     // Right now there is only one wallet for each principal,
     // so the it is derived from the principal itself.
     let derivation_path = vec![principal.as_slice().to_vec()];
-    // First public key is from the custody_wallet canister (i.e. this canister).
+    // First public key is from the custody_data canister (i.e. this canister).
     let pk1 = ecdsa_api::ecdsa_public_key(
-        custody_wallet.key_name.clone(),
+        custody_data.info.key_name.clone(),
         derivation_path.clone(),
         Option::None)
     .await;
     // Second public key is from the fiduciary canister.
     let fiduciary_pk: Result<(Vec<u8>,), _> = call(
-        custody_wallet.fiduciary_canister,
+        custody_data.info.fiduciary_canister,
         "public_key",
-        (derivation_path.clone(),),
+        (custody_data.info.network, derivation_path.clone(),),
     )
     .await;
     let pk2 = fiduciary_pk.expect("Failed to obtain public key from fiduciary canister.").0;
@@ -121,7 +158,8 @@ pub async fn get_or_create_wallet(custody_wallet: &mut CustodyWallet, principal:
 
     let script_pub_key = ScriptBuf::new_p2wsh(&witness_script.wscript_hash());
 
-    let address = match bitcoin::Address::from_script(&script_pub_key, match_network(custody_wallet.network)) {
+    // Generate the wallet address from the P2WSH script pubkey.
+    let address = match bitcoin::Address::from_script(&script_pub_key, match_network(custody_data.info.network)) {
         Ok(address) => {
            address
         }
@@ -131,7 +169,7 @@ pub async fn get_or_create_wallet(custody_wallet: &mut CustodyWallet, principal:
     };
 
     // Store the script and wallet address for this principal.
-    custody_wallet.wallets.insert(principal, WalletInfo {
+    custody_data.user_wallets.insert(principal, UserWallet {
         witness_script,
         address: address.clone(),
         derivation_path,
@@ -141,27 +179,28 @@ pub async fn get_or_create_wallet(custody_wallet: &mut CustodyWallet, principal:
 }
 
 /// Sends a transaction to the network that transfers the given amount to the
-/// given destination, where the source of the funds is the canister it
-/// at the given derivation path.
+/// from the given principal's wallet to the given destination address.
+/// The transaction is signed by the custody wallet and the fiduciary canister.
+/// Returns the transaction ID.
 pub async fn send(
-    wallet: &CustodyWallet,
+    custody_data: &CustodyData,
     from_principal: candid::Principal,
     dst_address: String,
     amount: Satoshi,
 ) -> Txid {
 
     // Check if we already have a wallet for this principal.
-    let wallet_info = match wallet.wallets.get(&from_principal) {
+    let user_wallet = match custody_data.user_wallets.get(&from_principal) {
         Some(info) => {
             info
         },
         None => {
-            panic!("No wallet found for principal {}", from_principal);
+            panic!("No wallet found for the principal {}", from_principal);
         },
     };
 
     // Get fee percentiles from previous transactions to estimate our own fee.
-    let fee_percentiles = bitcoin_api::get_current_fee_percentiles(wallet.network).await;
+    let fee_percentiles = bitcoin_api::get_current_fee_percentiles(custody_data.info.network).await;
 
     let fee_per_byte = if fee_percentiles.is_empty() {
         // There are no fee percentiles. This case can only happen on a regtest
@@ -177,17 +216,17 @@ pub async fn send(
     // Note that pagination may have to be used to get all UTXOs for the given address.
     // For the sake of simplicity, it is assumed here that the `utxo` field in the response
     // contains all UTXOs.
-    let own_utxos = bitcoin_api::get_utxos(wallet.network, wallet_info.address.to_string())
+    let own_utxos = bitcoin_api::get_utxos(custody_data.info.network, user_wallet.address.to_string())
         .await
         .utxos;
 
+    // @todo: check if the destination address is valid.
     let dst_address = Address::from_str(&dst_address).unwrap().assume_checked();
 
     // Build the transaction that sends `amount` to the destination address.
-    let built_transaction_output = build_transaction(
-        &wallet.key_name,
-        wallet.fiduciary_canister,
-        wallet_info,
+    let transaction_info = build_transaction(
+        &custody_data.info,
+        user_wallet,
         &own_utxos,
         &dst_address,
         amount,
@@ -195,15 +234,14 @@ pub async fn send(
     )
     .await;
 
-    let tx_bytes = consensus::serialize(&built_transaction_output.transaction);
+    let tx_bytes = consensus::serialize(&transaction_info.transaction);
     print(&format!("Transaction to sign: {}", hex::encode(tx_bytes)));
 
     // Sign the transaction.
     let signed_transaction = sign_transaction(
-        &wallet.key_name,
-        wallet.fiduciary_canister,
-        wallet_info,
-        built_transaction_output,
+        &custody_data.info,
+        user_wallet,
+        transaction_info,
         SigningMethod::Real,
     ).await;
 
@@ -214,7 +252,7 @@ pub async fn send(
     ));
 
     print("Sending transaction...");
-    bitcoin_api::send_transaction(wallet.network, signed_transaction_bytes).await;
+    bitcoin_api::send_transaction(custody_data.info.network, signed_transaction_bytes).await;
     print("Done");
 
     signed_transaction.txid()
@@ -223,14 +261,13 @@ pub async fn send(
 // Builds a transaction to send the given `amount` of satoshis to the
 // destination address.
 async fn build_transaction(
-    key_name: &str,
-    fiduciary_canister: candid::Principal,
-    wallet_info: &WalletInfo,
+    custody_info: &CustodyInfo,
+    user_wallet: &UserWallet,
     own_utxos: &[Utxo],
     dst_address: &Address,
     amount: Satoshi,
     fee_per_byte: MillisatoshiPerByte,
-) -> BuiltTransactionOutput {
+) -> TransactionInfo {
     // We have a chicken-and-egg problem where we need to know the length
     // of the transaction in order to compute its proper fee, but we need
     // to know the proper fee in order to figure out the inputs needed for
@@ -242,17 +279,16 @@ async fn build_transaction(
     print("Building transaction...");
     let mut total_fee = 0;
     loop {
-        let built_transaction =
-            build_transaction_with_fee(&wallet_info.address, own_utxos, dst_address, amount, total_fee)
+        let transaction_info =
+            build_transaction_with_fee(&user_wallet.address, own_utxos, dst_address, amount, total_fee)
                 .expect("Error building transaction.");
 
         // Sign the transaction. In this case, we only care about the size
         // of the signed transaction, so we use a mock signer here for efficiency.
         let signed_transaction = sign_transaction(
-            key_name,
-            fiduciary_canister,
-            wallet_info,
-            built_transaction.clone(),
+            custody_info,
+            user_wallet,
+            transaction_info.clone(),
             SigningMethod::Fake,
         ).await;
 
@@ -260,7 +296,7 @@ async fn build_transaction(
 
         if (signed_tx_bytes_len * fee_per_byte) / 1000 == total_fee {
             print(&format!("Transaction built with fee {}.", total_fee));
-            return built_transaction;
+            return transaction_info;
         } else {
             total_fee = (signed_tx_bytes_len * fee_per_byte) / 1000;
         }
@@ -273,7 +309,7 @@ fn build_transaction_with_fee(
     dst_address: &Address,
     amount: u64,
     fee: u64,
-) -> Result<BuiltTransactionOutput, String> {
+) -> Result<TransactionInfo, String> {
 
     // Assume that any amount below this threshold is dust.
     const DUST_THRESHOLD: u64 = 1_000;
@@ -329,66 +365,83 @@ fn build_transaction_with_fee(
         });
     }
 
-    Ok(BuiltTransactionOutput{
+    Ok(TransactionInfo{
         transaction: Transaction {
         input: inputs,
         output: outputs,
-        lock_time: LockTime::ZERO, // @todo: verify
-        version: bitcoin::blockdata::transaction::Version::ONE, // @todo: verify
+        lock_time: LockTime::ZERO,
+        version: bitcoin::blockdata::transaction::Version::ONE,
         },
         input_amounts: input_amounts,
     })
 }
 
+// Signs the given transaction with the signatures of the custody wallet
+// and the fiduciary canister generated using the given signing method.
+// Warning: this function assumes that the sender of the transaction is the P2WSH
+// address that corresponds to the witness script of the user wallet. Do not use
+// this function to sign transactions that are not sent from this address.
 async fn sign_transaction(
-    key_name: &str,
-    fiduciary_canister: candid::Principal,
-    wallet_info: &WalletInfo,
-    mut built_transaction: BuiltTransactionOutput,
+    custody_info: &CustodyInfo,
+    user_wallet: &UserWallet,
+    mut transaction_info: TransactionInfo,
     signing: SigningMethod,
 ) -> Transaction
 {
-    let txclone = built_transaction.transaction.clone();
+    let txclone = transaction_info.transaction.clone();
     let mut cache = sighash::SighashCache::new(&txclone);
 
-    for (index, input) in built_transaction.transaction.input.iter_mut().enumerate() {
+    for (index, input) in transaction_info.transaction.input.iter_mut().enumerate() {
         // Clear any previous witness
         input.witness.clear();
 
-        let amount = built_transaction.input_amounts.get(index).unwrap();
+        let amount = transaction_info.input_amounts.get(index).unwrap();
 
+        // Compute the sighash for this input using the witness script from the user wallet.
         let sighash = cache
-            .p2wsh_signature_hash(index, &wallet_info.witness_script, amount.clone(), EcdsaSighashType::All).expect("failed to compute sighash");
+            .p2wsh_signature_hash(
+                index,
+                &user_wallet.witness_script,
+                amount.clone(),
+                EcdsaSighashType::All
+            ).expect("failed to compute sighash");
 
+        // Sign the sighash using the derivation path from the user's wallet.
         let (signature_1, signature_2) = match signing {
             SigningMethod::Fake => (vec![255; 64], vec![255; 64]),
             SigningMethod::Real => {
                 let message_hash = sighash.to_byte_array().to_vec();
-                // First sign with the current (custody_wallet) canister.
-                let sig1 = ecdsa_api::sign_with_ecdsa(key_name.to_string(), wallet_info.derivation_path.clone(), message_hash.clone()).await;
-                // Then sign with the remote (fiduciary) canister.
+                // First sign with the current canister (i.e the custody wallet).
+                let sig1 = ecdsa_api::sign_with_ecdsa(
+                    custody_info.key_name.to_string(),
+                    user_wallet.derivation_path.clone(),
+                    message_hash.clone()
+                ).await;
+                // Then sign with the remote fiduciary canister.
                 let res_sig2: Result<(Vec<u8>,),_>  = call(
-                    fiduciary_canister,
+                    custody_info.fiduciary_canister,
                     "sign_for_custody",
-                    (wallet_info.derivation_path.clone(), message_hash,),
+                    (custody_info.network, user_wallet.derivation_path.clone(), message_hash,),
                 ).await;
                 let sig2 = res_sig2.unwrap().0;
                 (sec1_to_der(sig1), sec1_to_der(sig2))
             },
         };
 
+        // Add the sighash type to the signatures.
         let mut signature_der_1 = signature_1;
         signature_der_1.push(SIG_HASH_TYPE.to_u32() as u8);
         let mut signature_der_2 = signature_2;
         signature_der_2.push(SIG_HASH_TYPE.to_u32() as u8);
 
+        // Add the signatures to the witness.
         input.witness.push(vec![]);  // Placeholder for scriptSig
         input.witness.push(signature_der_1);
         input.witness.push(signature_der_2);
-        input.witness.push(wallet_info.witness_script.clone().into_bytes());
+        input.witness.push(user_wallet.witness_script.clone().into_bytes());
     }
 
-    built_transaction.transaction
+    transaction_info.transaction
 }
 
 // Converts a SEC1 ECDSA signature to the DER format.

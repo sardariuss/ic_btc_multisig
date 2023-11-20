@@ -12,7 +12,7 @@ const REPLICA_PORT = process.env.DFX_REPLICA_PORT ?? "4943";
 export default defineConfig({
   root: 'src/frontend',
   build: {
-    outDir: '../dist',
+    outDir: '../../dist',
     emptyOutDir: true,
   },
   optimizeDeps: {

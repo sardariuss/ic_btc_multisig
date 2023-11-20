@@ -41,6 +41,8 @@ service : (init_args) -> {
 
     "get_network": () -> (network);
 
+    "get_ecdsa_key_name": (network) -> (text);
+
     "get_balance": (address: bitcoin_address) -> (satoshi);
 
     "get_utxos": (bitcoin_address) -> (get_utxos_response);

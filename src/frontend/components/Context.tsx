@@ -1,15 +1,18 @@
-import { createActor }                from '../utils';
-import { _SERVICE }                   from '../../declarations/custody_wallet/custody_wallet.did';
-import { canisterId, idlFactory }     from "../../declarations/custody_wallet";
+import { createActor }                                                          from '../utils';
+import { _SERVICE as WalletService }                                            from '../../declarations/custody_wallet/custody_wallet.did';
+import { _SERVICE as FiduciaryService }                                         from '../../declarations/fiduciary/fiduciary.did';
+import { canisterId as walletCanisterId, idlFactory as walletIdlFactory }       from "../../declarations/custody_wallet";
+import { canisterId as fiduciaryCanisterId, idlFactory as fiduciaryIdlFactory } from "../../declarations/fiduciary";
 
-import { ActorSubclass }              from '@dfinity/agent';
-import { AuthClient }                 from '@dfinity/auth-client';
-import React, { useEffect, useState } from 'react';
+import { ActorSubclass }                                                        from '@dfinity/agent';
+import { AuthClient }                                                           from '@dfinity/auth-client';
+import React, { useEffect, useState }                                           from 'react';
 
 export const Context = React.createContext<{
     authClient?: AuthClient,
     isAuthenticated: boolean,
-    walletActor?: ActorSubclass<_SERVICE>,
+    walletActor?: ActorSubclass<WalletService>,
+    fiduciaryActor?: ActorSubclass<FiduciaryService>,
     login: () => void,
     logout: (client: AuthClient | undefined) => void,
   }>({
@@ -20,9 +23,10 @@ export const Context = React.createContext<{
 
 export const useContext = () => {
 
-  const [authClient,      setAuthClient     ] = useState<AuthClient | undefined>             (undefined);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>                            (false    );
-  const [walletActor,     setWalletActor    ] = useState<ActorSubclass<_SERVICE> | undefined>(undefined);
+  const [authClient,      setAuthClient     ] = useState<AuthClient | undefined>                     (undefined);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>                                    (false    );
+  const [walletActor,     setWalletActor    ] = useState<ActorSubclass<WalletService> | undefined>   (undefined);
+  const [fiduciaryActor,  setFiduciaryActor ] = useState<ActorSubclass<FiduciaryService> | undefined>(undefined);
 
   const refreshAuthClient = () => {
     AuthClient.create({
@@ -69,8 +73,18 @@ export const useContext = () => {
   const refreshWalletActor = async () => {
     setWalletActor(
       await createActor({
-        canisterId,
-        idlFactory,
+        canisterId: walletCanisterId,
+        idlFactory: walletIdlFactory,
+        identity: authClient?.getIdentity(), 
+      })
+    );
+  }
+  
+  const refreshFiduciaryActor = async () => {
+    setFiduciaryActor(
+      await createActor({
+        canisterId: fiduciaryCanisterId,
+        idlFactory: fiduciaryIdlFactory,
         identity: authClient?.getIdentity(), 
       })
     );
@@ -84,12 +98,14 @@ export const useContext = () => {
   // Refresh the wallet actor on auth client change
   useEffect(() => {
     refreshWalletActor();
+    refreshFiduciaryActor();
   }, [isAuthenticated]);
 
   return {
     authClient,
     isAuthenticated,
     walletActor,
+    fiduciaryActor,
     login,
     logout,
   };

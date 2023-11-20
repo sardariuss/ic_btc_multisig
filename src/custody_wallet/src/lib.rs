@@ -25,8 +25,9 @@ thread_local! {
     static FIDUCIARY_ID: RefCell<Option<candid::Principal>> = RefCell::new(None);
 
     // The custody wallet.
-    static CUSTODY_WALLET: RefCell<custody_wallet::CustodyWallet> = RefCell::default();
+    static CUSTODY_WALLET: RefCell<custody_wallet::CustodyData> = RefCell::default();
 }
+
 #[derive(Clone, Debug, candid::Deserialize, candid::CandidType)]
 pub struct InitArguments {
     pub bitcoin_network: BitcoinNetwork,
@@ -36,14 +37,9 @@ pub struct InitArguments {
 #[init]
 pub fn init(args: InitArguments) {
 
-    let key = String::from(match args.bitcoin_network {
-        // For local development, we use a special test key with dfx.
-        BitcoinNetwork::Regtest => "dfx_test_key",
-        // On the IC we're using a test ECDSA key.
-        BitcoinNetwork::Mainnet | BitcoinNetwork::Testnet => "test_key_1",
-    });
+    let key = get_key_name(args.bitcoin_network);
 
-    let custody_wallet = custody_wallet::CustodyWallet::new(
+    let custody_wallet = custody_wallet::CustodyData::new(
         args.bitcoin_network,
         key.clone(),
         args.fiduciary_id.clone()
@@ -116,6 +112,25 @@ pub async fn wallet_send(request: types::SendRequest) -> String {
         request.destination_address, 
         request.amount_in_satoshi)
     .await.to_string()
+}
+
+#[query]
+pub async fn get_ecdsa_key_name(bitcoin_network: BitcoinNetwork) -> String {
+    String::from(match bitcoin_network {
+        // For local development, we use a special test key with dfx.
+        BitcoinNetwork::Regtest => "dfx_test_key",
+        // On the IC we're using a test ECDSA key.
+        BitcoinNetwork::Mainnet | BitcoinNetwork::Testnet => "test_key_1",
+    })
+}
+
+fn get_key_name(bitcoin_network: BitcoinNetwork) -> String {
+    String::from(match bitcoin_network {
+        // For local development, we use a special test key with dfx.
+        BitcoinNetwork::Regtest => "dfx_test_key",
+        // On the IC we're using a test ECDSA key.
+        BitcoinNetwork::Mainnet | BitcoinNetwork::Testnet => "test_key_1",
+    })
 }
 
 #[pre_upgrade]

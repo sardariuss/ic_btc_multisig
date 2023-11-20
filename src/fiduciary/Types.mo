@@ -1,7 +1,6 @@
 module {
 
   public type FiduciaryArgs = {
-    bitcoin_network: BitcoinNetwork;
     custody_id: Principal;
   };
 
@@ -38,9 +37,9 @@ module {
   public type Cycles = Nat;
 
   public type BitcoinNetwork = {
-    #Mainnet;
-    #Testnet;
-    #Regtest;
+    #mainnet;
+    #testnet;
+    #regtest;
   };
 
 };

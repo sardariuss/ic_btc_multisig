@@ -15,10 +15,7 @@
     },
     "fiduciary": {
       "main": "src/fiduciary/Main.mo",
-        "type": "motoko",
-        "declarations": {
-          "output": "src/fiduciary/declarations/"
-        }
+      "type": "motoko"
     },
     "internet_identity": {
       "type": "custom",

@@ -28,6 +28,7 @@ export const getAgent = async ({identity} : CreateAgentParams) : Promise<HttpAge
 
   let agent = new HttpAgent({ 
     host: is_dev ? `http://localhost:${import.meta.env.DFX_REPLICA_PORT}` : `https://icp0.io`,
+    verifyQuerySignatures: false, // @todo: remove when upgraded to dfx 0.15.2
     identity
   });
 

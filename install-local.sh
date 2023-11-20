@@ -1,3 +1,5 @@
+# Install the canisters locally, configured to use the regtest network
+
 dfx start --background
 dfx canister create --all
 
@@ -7,7 +9,6 @@ export CUSTODY_ID=$(dfx canister id custody_wallet)
 export FIDUCIARY_ID=$(dfx canister id fiduciary)
 
 dfx canister install fiduciary --argument="(record {
-  bitcoin_network = variant { Regtest };
   custody_id = principal \"${CUSTODY_ID}\";
 })"
 
