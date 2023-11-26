@@ -1,0 +1,25 @@
+type transaction_id = text;
+
+type network = variant {
+    regtest;
+    testnet;
+    mainnet;
+};
+
+type raw_transaction_info = record {
+  transaction: blob;
+  witness_script: blob;
+  sig_hashes: vec blob;
+};
+
+type derivation_path = vec blob;
+
+service : () -> {
+
+  "get_ecdsa_key_name": (network) -> (text);
+
+  "public_key": (network, derivation_path) -> (blob);
+  
+  "finalize_send_request": (network, raw_transaction_info) -> (transaction_id);
+
+}

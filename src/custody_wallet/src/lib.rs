@@ -1,10 +1,6 @@
-mod bitcoin_api;
-mod custody_wallet;
-mod ecdsa_api;
-mod types;
-
-use ic_cdk::api::management_canister::bitcoin::{
-    BitcoinNetwork, GetUtxosResponse, MillisatoshiPerByte,
+use multisig_common::{
+    common,
+    types::{BitcoinNetwork, SendRequest, RawTransactionInfo},
 };
 use ic_cdk::api;
 use ic_cdk_macros::{init, post_upgrade, pre_upgrade, update, query};
@@ -25,7 +21,7 @@ thread_local! {
     static FIDUCIARY_ID: RefCell<Option<candid::Principal>> = RefCell::new(None);
 
     // The custody wallet.
-    static CUSTODY_WALLET: RefCell<custody_wallet::CustodyData> = RefCell::default();
+    static CUSTODY_WALLET: RefCell<common::CustodyData> = RefCell::default();
 }
 
 #[derive(Clone, Debug, candid::Deserialize, candid::CandidType)]
@@ -39,7 +35,7 @@ pub fn init(args: InitArguments) {
 
     let key = get_key_name(args.bitcoin_network);
 
-    let custody_wallet = custody_wallet::CustodyData::new(
+    let custody_wallet = common::CustodyData::new(
         args.bitcoin_network,
         key.clone(),
         args.fiduciary_id.clone()
@@ -67,53 +63,6 @@ pub async fn get_network() -> BitcoinNetwork {
     NETWORK.with(|n| n.get())
 }
 
-/// Returns the balance of the given bitcoin address.
-#[update]
-pub async fn get_balance(address: String) -> u64 {
-    let network = NETWORK.with(|n| n.get());
-    bitcoin_api::get_balance(network, address).await
-}
-
-/// Returns the UTXOs of the given bitcoin address.
-#[update]
-pub async fn get_utxos(address: String) -> GetUtxosResponse {
-    let network = NETWORK.with(|n| n.get());
-    bitcoin_api::get_utxos(network, address).await
-}
-
-/// Returns the 100 fee percentiles measured in millisatoshi/byte.
-/// Percentiles are computed from the last 10,000 transactions (if available).
-#[update]
-pub async fn get_current_fee_percentiles() -> Vec<MillisatoshiPerByte> {
-    let network = NETWORK.with(|n| n.get());
-    bitcoin_api::get_current_fee_percentiles(network).await
-}
-
-#[update]
-pub async fn get_wallet_address() -> String {
-    let principal = &api::caller();
-    let mut custody_wallet = CUSTODY_WALLET.with(|w| w.borrow().clone());
-    let address = custody_wallet::get_or_create_wallet(&mut custody_wallet, principal.clone()).await;
-    CUSTODY_WALLET.with(|wallet| {
-        wallet.replace(custody_wallet);
-    });
-    address.to_string()
-}
-
-/// Sends the given amount of bitcoin from the principal's wallet to the given address.
-/// Returns the transaction ID.
-#[update]
-pub async fn wallet_send(request: types::SendRequest) -> String {
-    let principal = &api::caller();
-    let wallet = CUSTODY_WALLET.with(|w| w.borrow().clone());
-    custody_wallet::send(
-        &wallet, 
-        principal.clone(), 
-        request.destination_address, 
-        request.amount_in_satoshi)
-    .await.to_string()
-}
-
 #[query]
 pub async fn get_ecdsa_key_name(bitcoin_network: BitcoinNetwork) -> String {
     String::from(match bitcoin_network {
@@ -122,6 +71,53 @@ pub async fn get_ecdsa_key_name(bitcoin_network: BitcoinNetwork) -> String {
         // On the IC we're using a test ECDSA key.
         BitcoinNetwork::Mainnet | BitcoinNetwork::Testnet => "test_key_1",
     })
+}
+
+/// Returns the balance of the given bitcoin address.
+#[update]
+pub async fn get_balance(address: String) -> u64 {
+    let network = NETWORK.with(|n| n.get());
+    common::get_balance(network, address).await
+}
+
+#[update]
+pub async fn get_wallet_address() -> String {
+    let principal = &api::caller();
+    let mut custody_wallet = CUSTODY_WALLET.with(|w| w.borrow().clone());
+    let address = common::get_or_create_wallet(&mut custody_wallet, principal.clone()).await;
+    CUSTODY_WALLET.with(|wallet| {
+        wallet.replace(custody_wallet);
+    });
+    address.to_string()
+}
+
+#[update]
+pub async fn init_send_request(send_request: SendRequest) -> RawTransactionInfo {
+    
+    let principal = &api::caller();
+    let custody_data = CUSTODY_WALLET.with(|w| w.borrow().clone());        
+
+    // Build the transaction.
+    let mut transaction_info = common::build_unsigned_transaction(
+        &custody_data,
+        principal.clone(),
+        send_request.destination_address, 
+        send_request.amount_in_satoshi)
+    .await;
+
+    let bitcoin_network = NETWORK.with(|n| n.get());
+    let key_name = get_key_name(bitcoin_network);
+
+    // Insert the first signature.
+    transaction_info = common::sign_transaction(
+        &transaction_info,
+        &key_name,
+        &vec![principal.as_slice().to_vec()],
+        common::MultisigIndex::First)
+    .await;
+
+    // Return the raw transaction info.
+    transaction_info.to_raw()
 }
 
 fn get_key_name(bitcoin_network: BitcoinNetwork) -> String {

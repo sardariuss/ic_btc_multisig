@@ -1,5 +1,6 @@
 use candid::{CandidType, Deserialize, Principal};
 use serde::Serialize;
+pub use ic_cdk::api::management_canister::bitcoin::BitcoinNetwork;
 
 #[derive(CandidType, Deserialize)]
 pub struct SendRequest {
@@ -42,4 +43,11 @@ pub struct SignWithECDSA {
     pub message_hash: Vec<u8>,
     pub derivation_path: Vec<Vec<u8>>,
     pub key_id: EcdsaKeyId,
+}
+
+#[derive(CandidType, Serialize, Deserialize, Debug)]
+pub struct RawTransactionInfo {
+    pub transaction: Vec<u8>,
+    pub witness_script: Vec<u8>,
+    pub sig_hashes: Vec<Vec<u8>>,
 }

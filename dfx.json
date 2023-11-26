@@ -14,8 +14,16 @@
       ]
     },
     "fiduciary": {
-      "main": "src/fiduciary/Main.mo",
-      "type": "motoko"
+      "type": "custom",
+      "package": "fiduciary",
+      "candid": "src/fiduciary/fiduciary.did",
+      "wasm": "target/wasm32-unknown-unknown/release/fiduciary.wasm",
+      "build": "src/fiduciary/build.sh",
+      "metadata": [
+        {
+          "name": "candid:service"
+        }
+      ]
     },
     "internet_identity": {
       "type": "custom",

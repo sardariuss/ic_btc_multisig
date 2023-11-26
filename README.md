@@ -9,9 +9,8 @@ The following code is provided as-is and has not undergone deep testing or audit
 ## Deploy the smart contract to the Internet Computer
 
 The contracts are already deployed on the IC here: https://o3zgr-waaaa-aaaap-abr2q-cai.raw.icp0.io/
-To deploy it yourself on the IC (for the Bitcoin testnet), you can inspire yourself from the script use install-ic.sh
-Note however that to install the fiduciary canister on the fiduciary subnet, the only present way to do so is to create the canister with the dfx ledger command:
-```dfx ledger create-canister --subnet-type=fiduciary --e8s=50000000 --ic <CONTROLLER> ```
+To deploy it yourself on the IC (for the Bitcoin testnet), you can inspire yourself from the script install-ic.sh. However note that to install the fiduciary canister on the fiduciary subnet, the only present way to do so is to create the canister with the dfx ledger command:
+```dfx ledger create-canister --subnet-type=fiduciary --e8s=50000000 --ic <CONTROLLER>```
 
 ## How does it work?
 
