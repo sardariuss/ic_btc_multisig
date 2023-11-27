@@ -7,6 +7,7 @@ import regtestLogo                                 from './assets/bitcoin_regtes
 import { frome8s, networkToString, networkToLogo } from './utils';
 import { canisterId as walletId }                  from "../declarations/custody_wallet";
 import { canisterId as fiduciaryId }               from "../declarations/fiduciary";
+import { _SERVICE as FiduciaryService }            from '../declarations/fiduciary/fiduciary.did';
 import { network }                                 from '../declarations/custody_wallet/custody_wallet.did';
 
 import NumberInput                                 from './components/NumberInput';
@@ -46,6 +47,8 @@ import MenuItem                                    from '@mui/material/MenuItem'
 import FormControl                                 from '@mui/material/FormControl';
 import Select                                      from '@mui/material/Select';
 
+import { ActorSubclass }                           from '@dfinity/agent';
+
 import React, { useEffect, useState }              from 'react';
 
 function App() {
@@ -72,6 +75,7 @@ function App() {
   const [activeTab,      setActiveTab     ] = useState<string>             ("Send"   );
   
   // Send
+  const [canSend,        setCanSend       ] = useState<boolean>            (false    );
   const [destination,    setDestination   ] = useState<string>             (""       );
   const [amount,         setAmount        ] = useState<bigint>             (BigInt(0));
   const [sendLoading,    setSendLoading   ] = useState<boolean>            (false    );
@@ -114,19 +118,20 @@ function App() {
   }
 
   const walletSend = () => {
-    if (walletActor !== undefined && destination !== undefined){
-      setSendLoading(true);
-      walletActor?.wallet_send({destination_address: destination, amount_in_satoshi: amount}).then((tx_id) => {
-        setSentSuccess(true);
-        setSentOutput(tx_id);
-        refreshBalance();
-      }).catch((error) => {
-        setSentSuccess(false);
-        setSentOutput(error.toString());
-      }).finally(() => {
-        setSendLoading(false);
-      });
+    if (!canSend){
+      throw new Error("Initial conditions are not met");
     }
+    setSendLoading(true);
+    walletActor?.init_send_request({destination_address: destination, amount_in_satoshi: amount}).then(async (raw_transaction_info) => {
+      const tx_id = await (fiduciaryActor as ActorSubclass<FiduciaryService>).finalize_send_request(bitcoinNetwork as network, raw_transaction_info);
+      setSentSuccess(true);
+      setSentOutput(tx_id);
+    }).catch((error) => {
+      setSentSuccess(false);
+      setSentOutput(error.toString());
+    }).finally(() => {
+      setSendLoading(false);
+    });
   }
 
   // Refresh the wallet address on wallet actor change
@@ -145,6 +150,15 @@ function App() {
   useEffect(() => {
     refreshBalance();
   }, [userAddress]);
+
+  // Refresh the send button state on actor, network, destination and amount change
+  useEffect(() => {
+    setCanSend(walletActor !== undefined &&
+      fiduciaryActor !== undefined &&
+      bitcoinNetwork !== undefined &&
+      destination !== undefined &&
+      amount > 0n);
+  }, [walletActor, fiduciaryActor, bitcoinNetwork, destination, amount]);
 
   if (!authClient) return null;
 
@@ -334,6 +348,7 @@ function App() {
                                       endIcon={<SendIcon />}
                                       loading={sendLoading}
                                       variant="contained"
+                                      disabled={ !canSend }
                                     >
                                       <span>Confirm</span>
                                     </LoadingButton>

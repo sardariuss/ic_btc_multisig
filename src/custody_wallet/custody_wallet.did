@@ -1,12 +1,6 @@
 type satoshi = nat64;
 
-type millisatoshi_per_vbyte = nat64;
-
 type bitcoin_address = text;
-
-type transaction_id = text;
-
-type block_hash = blob;
 
 type network = variant {
     regtest;
@@ -14,22 +8,15 @@ type network = variant {
     mainnet;
 };
 
-type outpoint = record {
-  txid : blob;
-  vout : nat32
+type send_request = record {
+  destination_address: bitcoin_address;
+  amount_in_satoshi: satoshi;
 };
 
-type utxo = record {
-  outpoint: outpoint;
-  value: satoshi;
-  height: nat32;
-};
-
-type get_utxos_response = record {
-  utxos: vec utxo;
-  tip_block_hash: block_hash;
-  tip_height: nat32;
-  next_page: opt blob;
+type raw_transaction_info = record {
+  transaction: blob;
+  witness_script: blob;
+  sig_hashes: vec blob;
 };
 
 type init_args = record {
@@ -39,21 +26,14 @@ type init_args = record {
 
 service : (init_args) -> {
 
-    "get_network": () -> (network);
+  "get_network": () -> (network);
 
-    "get_ecdsa_key_name": (network) -> (text);
+  "get_ecdsa_key_name": (network) -> (text);
 
-    "get_balance": (address: bitcoin_address) -> (satoshi);
+  "get_balance": (bitcoin_address) -> (satoshi);
 
-    "get_utxos": (bitcoin_address) -> (get_utxos_response);
+  "get_wallet_address": () -> (bitcoin_address);
 
-    "get_current_fee_percentiles": () -> (vec millisatoshi_per_vbyte);
-
-    "get_wallet_address": () -> (bitcoin_address);
-
-    "wallet_send": (record {
-      destination_address: bitcoin_address;
-      amount_in_satoshi: satoshi;
-    }) -> (transaction_id);
+  "init_send_request": (send_request) -> (raw_transaction_info);
 
 }

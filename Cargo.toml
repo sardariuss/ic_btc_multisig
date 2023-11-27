@@ -1,4 +1,6 @@
 [workspace]
 members = [
+    "src/multisig_common",
     "src/custody_wallet",
+    "src/fiduciary",
 ]

@@ -1,5 +1,5 @@
 [package]
-name = "custody_wallet"
+name = "fiduciary"
 version = "0.1.0"
 edition = "2021"
 
