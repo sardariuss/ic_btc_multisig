@@ -42,6 +42,7 @@ import Paper                                       from '@mui/material/Paper';
 
 import { QRCodeSVG }                               from 'qrcode.react';
 
+import { ThemeProvider, useTheme }                 from "@mui/material";
 import InputLabel                                  from '@mui/material/InputLabel';
 import MenuItem                                    from '@mui/material/MenuItem';
 import FormControl                                 from '@mui/material/FormControl';
@@ -51,7 +52,22 @@ import { ActorSubclass }                           from '@dfinity/agent';
 
 import React, { useEffect, useState }              from 'react';
 
+const getTabStyle = (theme: any) => ({
+  flexGrow: 0.5,
+  fontWeight: "bold",
+  fontSize: theme.typography.pxToRem(12),
+  [theme.breakpoints.up("md")]: {
+    fontSize: theme.typography.pxToRem(16),
+  },
+  [theme.breakpoints.up("lg")]: {
+    fontSize: theme.typography.pxToRem(20),
+  },
+});
+
 function App() {
+
+  const theme = useTheme();
+  const tabStyle = getTabStyle(theme);
 
   const {
     authClient,
@@ -174,19 +190,19 @@ function App() {
         <div className="flex flex-col items-center w-full grow">
           {
             isAuthenticated ? 
-            <div className="flex flex-col items-center w-full grow my-2">
-              <div className="py-6">
+            <div className="flex flex-col items-center w-full grow px-1">
+              <div className="xl:py-6 lg:py-4 md:py-3 py-2">
                 <Title/>
-                <div className="flex flex-row justify-center gap-x-5">
-                  <a href="https://internetcomputer.org/" target="_blank" className="h-12 w-24">
+                <div className="flex flex-row justify-center xl:gap-x-4 lg:gap-x-3 md:gap-x-2 gap-x-1">
+                  <a href="https://internetcomputer.org/" target="_blank" className="xl:lg:md:w-1/12 w-1/6">
                     <img src={icLogo} className="logo ic" alt="" />
                   </a>
-                  <a href="https://bitcoin.org/" target="_blank" className="h-12 w-12">
+                  <a href="https://bitcoin.org/" target="_blank" className="xl:lg:md:w-1/24 w-1/12">
                     <img src={mainnetLogo} className="logo btc" alt="Bitcoin logo" />
                   </a>
                 </div>
               </div>
-              <div className="flex flex-col w-1/3 items-center grow space-y-2">
+              <div className="flex flex-col xl:w-1/3 lg:w-1/3 md:w-1/2 w-full items-center grow space-y-2">
                 <FormControl fullWidth disabled={true}>
                   <InputLabel id="demo-simple-select-label">Bitcoin network</InputLabel>
                   <Select
@@ -219,8 +235,8 @@ function App() {
                   <Table aria-label="simple table" size="small">
                     <TableHead>
                       <TableRow>
-                        <TableCell align="left">Canister name</TableCell>
-                        <TableCell align="center">Canister ID</TableCell>
+                        <TableCell align="left">Canister</TableCell>
+                        <TableCell align="center">Principal</TableCell>
                         <TableCell align="center">ECDSA Key</TableCell>
                       </TableRow>
                     </TableHead>
@@ -269,21 +285,21 @@ function App() {
                     </TableBody>
                   </Table>
                 </TableContainer>
-                <div className="py-4">
+                <div className="xl:py-3 lg:py-3 md:py-2">
                   {
                     balanceSats === undefined ?
                     <div className="flex flex-col items-center space-y-1">
                       <span className="text-lg">Loading balance...</span>
                       <CircularProgress size={32}/>
                     </div> :
-                    <div className="flex flex-row space-x-1 items-center justify-center py-4">
+                    <div className="flex flex-row space-x-1 items-center justify-center">
                       <IconButton onClick={(e) => refreshBalance()}>
                         <Refresh />
                       </IconButton>
-                      <span className="text-3xl">
+                      <span className="xl:text-3xl lg:text-3xl md:text-2xl text-2xl">
                         { balanceSats !== undefined ? frome8s(balanceSats).toFixed(8) : ""}
                       </span>
-                      <span className="text-xl self-end">
+                      <span className="xl:text-xl lg:text-xl md:text-sm text-sm self-end">
                         { balanceSats !== undefined ? "btc" : "" }
                       </span>
                     </div>
@@ -293,38 +309,43 @@ function App() {
                   <TabContext value={activeTab}>
                     <div className="flex flex-row space-x-1 items-center justify-center w-full">
                       <TabList onChange={(event, tab) => setActiveTab(tab)} aria-label="tabs">
-                        <Tab label="Send"    value="Send"    sx={{width:300, fontSize:16, fontWeight: "bold"}}/>
-                        <Tab label="Receive" value="Receive" sx={{width:300, fontSize:16, fontWeight: "bold"}}/>
+                        <Tab label="Send"    value="Send" sx={{...tabStyle}}/>
+                        <Tab label="Receive" value="Receive" sx={{...tabStyle}}/>
                       </TabList>
                     </div>
                     <TabPanel value="Send">
-                      <div className="flex flex-col items-center gap-y-5">
-                        <div className="grid grid-cols-2 items-center space-y-2">
+                      <div className="flex flex-col items-center">
+                        <div className="grid grid-cols-3 items-center xl:lg:md:space-y-2 space-y-1">
                           <span className="text-lg">
                             Destination
                           </span>
-                          <TextField
-                            id="outlined-controlled"
-                            label="btc address"
-                            value={destination}
-                            onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
-                              setDestination(event.target.value);
-                            }}
-                          />
+                          <div className="col-span-2">
+                            <TextField
+                              id="outlined-controlled"
+                              label="btc address"
+                              value={destination}
+                              onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
+                                setDestination(event.target.value);
+                              }}
+                              sx={{flexGrow: 1.0}}
+                            />
+                          </div>
                           <span className="text-lg">
                             Amount
                           </span>
-                          <NumberInput
-                            label=""
-                            min={0}
-                            initialValue={0}
-                            onChange={(n) => setAmount(BigInt(n))}
-                            unit="sats"
-                          />
+                          <div className="col-span-2">
+                            <NumberInput
+                              label=""
+                              min={0}
+                              initialValue={0}
+                              onChange={(n) => setAmount(BigInt(n))}
+                              unit="sats"
+                            />
+                          </div>
                         </div>
                         <PopupState variant="popover" popupId="demo-popup-popover">
                           {(popupState) => (
-                            <div>
+                            <div className="py-2">
                               <Button size="large" variant="contained" {...bindTrigger(popupState)} disabled={destination.length === 0 || amount < 1} onFocus={(e) => { setSentOutput("") }}>
                                 Send
                               </Button>
